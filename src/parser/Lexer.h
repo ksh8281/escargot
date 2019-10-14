@@ -200,7 +200,7 @@ struct ScanTemplateResult {
     bool tail;
 };
 
-struct ScanRegExpResult {
+struct ScanRegExpResult : public gc {
     ScanRegExpResult()
         : body(nullptr)
         , flags(nullptr)
@@ -226,16 +226,11 @@ extern const char* UnterminatedRegExp;
 extern const char* TemplateOctalLiteral;
 }
 
+typedef std::tuple<StringBufferAccessData, String*> ScannerIDResult;
+
+template<typename SourceReader>
 class Scanner {
 public:
-    struct ScannerSourceStringView {
-        union {
-            String* m_stringIfNewlyAllocated;
-            size_t m_start;
-        };
-        size_t m_end;
-    };
-
     class ScannerResult {
     public:
         ScannerResult()
@@ -261,6 +256,7 @@ public:
         bool startWithZero : 1;
         bool octal : 1;
         bool hasAllocatedString : 1;
+        bool hasIntegerNumberLiteral : 1;
         bool hasNonComputedNumberLiteral : 1;
         bool hasKeywordButUseString : 1;
         unsigned char prec : 8; // max prec is 11
@@ -274,17 +270,18 @@ public:
 
         union {
             PunctuatorKind valuePunctuatorKind;
-            ScannerSourceStringView valueStringLiteralData;
-            double valueNumber;
+            String* valueStringIfNewlyAllocated;
+            uint32_t valueInteger; // TODO use 64bit integer in 64bit
+            double* valueNumber;
             ScanTemplateResult* valueTemplate;
-            ScanRegExpResult valueRegexp;
+            ScanRegExpResult* valueRegexp;
             KeywordKind valueKeywordKind;
         };
 
-        StringView relatedSource(const StringView& source);
-        StringView valueStringLiteral(Scanner* scannerInstance);
-        Value valueStringLiteralForAST(Scanner* scannerInstance);
-        double valueNumberLiteral(Scanner* scannerInstance);
+        StringView relatedSource(const StringView& source) const;
+        StringView valueStringLiteral(Scanner<SourceReader>* scannerInstance);
+        Value valueStringLiteralForAST(Scanner<SourceReader>* scannerInstance);
+        double valueNumberLiteral(Scanner<SourceReader>* scannerInstance);
 
         inline operator bool() const
         {
@@ -303,12 +300,13 @@ public:
             this->octal = false;
             this->hasAllocatedString = false;
             this->hasNonComputedNumberLiteral = false;
+            this->hasIntegerNumberLiteral = false;
             this->hasKeywordButUseString = false;
             this->lineNumber = lineNumber;
             this->lineStart = lineStart;
             this->start = start;
             this->end = end;
-            this->valueNumber = 0;
+            this->valueNumber = nullptr;
         }
 
         void setPunctuatorResult(size_t lineNumber, size_t lineStart, size_t start, size_t end, PunctuatorKind p)
@@ -318,6 +316,7 @@ public:
             this->octal = false;
             this->hasAllocatedString = false;
             this->hasNonComputedNumberLiteral = false;
+            this->hasIntegerNumberLiteral = false;
             this->hasKeywordButUseString = false;
             this->lineNumber = lineNumber;
             this->lineStart = lineStart;
@@ -333,6 +332,7 @@ public:
             this->octal = false;
             this->hasAllocatedString = false;
             this->hasNonComputedNumberLiteral = false;
+            this->hasIntegerNumberLiteral = false;
             this->hasKeywordButUseString = false;
             this->lineNumber = lineNumber;
             this->lineStart = lineStart;
@@ -348,31 +348,31 @@ public:
             this->octal = octal;
             this->hasKeywordButUseString = true;
             this->hasNonComputedNumberLiteral = false;
+            this->hasIntegerNumberLiteral = false;
             this->lineNumber = lineNumber;
             this->lineStart = lineStart;
             this->start = start;
             this->end = end;
 
             this->hasAllocatedString = true;
-            this->valueStringLiteralData.m_stringIfNewlyAllocated = s;
+            this->valueStringIfNewlyAllocated = s;
         }
 
-        void setResult(Token type, size_t stringStart, size_t stringEnd, size_t lineNumber, size_t lineStart, size_t start, size_t end, bool octal = false)
+        void setStringViewKindResult(Token type, size_t lineNumber, size_t lineStart, size_t start, size_t end, bool octal = false)
         {
             this->type = type;
             this->startWithZero = false;
             this->octal = octal;
             this->hasKeywordButUseString = true;
             this->hasNonComputedNumberLiteral = false;
+            this->hasIntegerNumberLiteral = false;
             this->lineNumber = lineNumber;
             this->lineStart = lineStart;
             this->start = start;
             this->end = end;
 
             this->hasAllocatedString = false;
-            this->valueStringLiteralData.m_start = stringStart;
-            this->valueStringLiteralData.m_end = stringEnd;
-            ASSERT(this->valueStringLiteralData.m_start <= this->valueStringLiteralData.m_end);
+            this->valueStringIfNewlyAllocated = nullptr;
         }
 
         void setNumericLiteralResult(double value, size_t lineNumber, size_t lineStart, size_t start, size_t end, bool hasNonComputedNumberLiteral)
@@ -387,7 +387,16 @@ public:
             this->lineStart = lineStart;
             this->start = start;
             this->end = end;
-            this->valueNumber = value;
+
+            if (!hasNonComputedNumberLiteral) {
+                if (uint32_t(value) != value || (!value && std::signbit(value) /* test -0.0 */)) {
+                    this->hasIntegerNumberLiteral = false;
+                    this->valueNumber = new(PointerFreeGC) double(value);
+                } else {
+                    this->hasIntegerNumberLiteral = true;
+                    this->valueInteger = value;
+                }
+            }
         }
 
         void setTemplateTokenResult(ScanTemplateResult* value, size_t lineNumber, size_t lineStart, size_t start, size_t end)
@@ -398,6 +407,7 @@ public:
             this->hasAllocatedString = false;
             this->hasKeywordButUseString = true;
             this->hasNonComputedNumberLiteral = false;
+            this->hasIntegerNumberLiteral = false;
             this->lineNumber = lineNumber;
             this->lineStart = lineStart;
             this->start = start;
@@ -406,67 +416,15 @@ public:
         }
 
     private:
-        void constructStringLiteral(Scanner* scannerInstance);
-        void constructStringLiteralHelperAppendUTF16(Scanner* scannerInstance, char16_t ch, UTF16StringDataNonGCStd& stringUTF16, bool& isEveryCharLatin1);
+        void constructStringLiteral(Scanner<SourceReader>* scannerInstance);
+        void constructStringLiteralHelperAppendUTF16(Scanner<SourceReader>* scannerInstance, char16_t ch, UTF16StringDataNonGCStd& stringUTF16, bool& isEveryCharLatin1);
     };
 
-    class SmallScannerResult {
-    public:
-        SmallScannerResult()
-            : type(InvalidToken)
-            , prec(0)
-            , lineNumber(0)
-            , lineStart(0)
-            , start(0)
-            , end(0)
-        {
-        }
-
-        SmallScannerResult(const ScannerResult& scan)
-            : type(scan.type)
-            , prec(scan.prec)
-            , lineNumber(scan.lineNumber)
-            , lineStart(scan.lineStart)
-            , start(scan.start)
-            , end(scan.end)
-            , valueKeywordKind(scan.valueKeywordKind)
-        {
-        }
-
-        ~SmallScannerResult() {}
-        // SmallScannerResult always allocated on the stack
-        MAKE_STACK_ALLOCATED();
-
-        unsigned char type : 4;
-        char prec : 8; // max prec is 11
-
-        size_t lineNumber;
-        size_t lineStart;
-        size_t start;
-        size_t end;
-
-        union {
-            PunctuatorKind valuePunctuatorKind;
-            KeywordKind valueKeywordKind;
-        };
-
-        inline operator bool() const
-        {
-            return this->type != InvalidToken;
-        }
-
-        inline void reset()
-        {
-            this->type = InvalidToken;
-        }
-
-        StringView relatedSource(const StringView& source) const;
-    };
-
-    // ScannerResult should be allocated on the stack by ALLOCA
-    COMPILE_ASSERT(sizeof(ScannerResult) < 512, "");
+    // Keep ScannerResult small
+    COMPILE_ASSERT(sizeof(ScannerResult) <= sizeof(size_t) * 6, "");
 
     StringView source;
+    StringBufferAccessData sourceBufferAccessData;
     ::Escargot::Context* escargotContext;
     // trackComment: boolean;
 
@@ -499,24 +457,30 @@ public:
     void skipSingleLineComment(void);
     void skipMultiLineComment(void);
 
+    char16_t sourceCharAt(const size_t& idx)
+    {
+        SourceReader reader;
+        return reader(sourceBufferAccessData, idx);
+    }
+
     ALWAYS_INLINE void scanComments()
     {
         bool start = (this->index == 0);
         while (LIKELY(!this->eof())) {
-            char16_t ch = this->source.bufferedCharAt(this->index);
+            char16_t ch = sourceCharAt(this->index);
 
             if (isWhiteSpace(ch)) {
                 ++this->index;
             } else if (isLineTerminator(ch)) {
                 ++this->index;
-                if (ch == 0x0D && this->source.bufferedCharAt(this->index) == 0x0A) {
+                if (ch == 0x0D && sourceCharAt(this->index) == 0x0A) {
                     ++this->index;
                 }
                 ++this->lineNumber;
                 this->lineStart = this->index;
                 start = true;
             } else if (ch == 0x2F) { // U+002F is '/'
-                ch = this->source.bufferedCharAt(this->index + 1);
+                ch = sourceCharAt(this->index + 1);
                 if (ch == 0x2F) {
                     this->index += 2;
                     this->skipSingleLineComment();
@@ -529,7 +493,7 @@ public:
                 }
             } else if (start && ch == 0x2D) { // U+002D is '-'
                 // U+003E is '>'
-                if ((this->source.bufferedCharAt(this->index + 1) == 0x2D) && (this->source.bufferedCharAt(this->index + 2) == 0x3E)) {
+                if ((sourceCharAt(this->index + 1) == 0x2D) && (sourceCharAt(this->index + 2) == 0x3E)) {
                     // '-->' is a single-line comment
                     this->index += 3;
                     this->skipSingleLineComment();
@@ -538,9 +502,9 @@ public:
                 }
             } else if (ch == 0x3C) { // U+003C is '<'
                 if (this->length > this->index + 4) {
-                    if (this->source.bufferedCharAt(this->index + 1) == '!'
-                        && this->source.bufferedCharAt(this->index + 2) == '-'
-                        && this->source.bufferedCharAt(this->index + 3) == '-') {
+                    if (sourceCharAt(this->index + 1) == '!'
+                        && sourceCharAt(this->index + 2) == '-'
+                        && sourceCharAt(this->index + 3) == '-') {
                         this->index += 4; // `<!--`
                         this->skipSingleLineComment();
                     } else {
@@ -596,9 +560,9 @@ public:
     char32_t codePointAt(size_t i)
     {
         char32_t cp, first, second;
-        cp = this->source.bufferedCharAt(i);
+        cp = sourceCharAt(i);
         if (cp >= 0xD800 && cp <= 0xDBFF) {
-            second = this->source.bufferedCharAt(i + 1);
+            second = sourceCharAt(i + 1);
             if (second >= 0xDC00 && second <= 0xDFFF) {
                 first = cp;
                 cp = (first - 0xD800) * 0x400 + second - 0xDC00 + 0x10000;
@@ -609,17 +573,17 @@ public:
     }
 
     // ECMA-262 11.8.6 Template Literal Lexical Components
-    void scanTemplate(Scanner::ScannerResult* token, bool head = false);
+    void scanTemplate(Scanner<SourceReader>::ScannerResult* token, bool head = false);
 
     // ECMA-262 11.8.5 Regular Expression Literals
-    void scanRegExp(Scanner::ScannerResult* token);
+    void scanRegExp(Scanner<SourceReader>::ScannerResult* token);
 
-    void lex(Scanner::ScannerResult* token);
+    void lex(Scanner<SourceReader>::ScannerResult* token);
 
 private:
     ALWAYS_INLINE char16_t peekChar()
     {
-        return this->source.bufferedCharAt(this->index);
+        return sourceCharAt(this->index);
     }
 
     char32_t scanHexEscape(char prefix);
@@ -627,30 +591,54 @@ private:
 
     uint16_t octalToDecimal(char16_t ch, bool octal);
 
-    typedef std::tuple<StringBufferAccessData, String*> ScanIDResult;
-    ScanIDResult getIdentifier();
-    ScanIDResult getComplexIdentifier();
+    ScannerIDResult getIdentifier();
+    ScannerIDResult getComplexIdentifier();
 
     // ECMA-262 11.7 Punctuators
-    void scanPunctuator(Scanner::ScannerResult* token, char16_t ch0);
+    void scanPunctuator(Scanner<SourceReader>::ScannerResult* token, char16_t ch0);
 
     // ECMA-262 11.8.3 Numeric Literals
-    void scanHexLiteral(Scanner::ScannerResult* token, size_t start);
-    void scanBinaryLiteral(Scanner::ScannerResult* token, size_t start);
-    void scanOctalLiteral(Scanner::ScannerResult* token, char16_t prefix, size_t start);
+    void scanHexLiteral(Scanner<SourceReader>::ScannerResult* token, size_t start);
+    void scanBinaryLiteral(Scanner<SourceReader>::ScannerResult* token, size_t start);
+    void scanOctalLiteral(Scanner<SourceReader>::ScannerResult* token, char16_t prefix, size_t start);
 
     bool isImplicitOctalLiteral();
-    void scanNumericLiteral(Scanner::ScannerResult* token);
+    void scanNumericLiteral(Scanner<SourceReader>::ScannerResult* token);
 
     // ECMA-262 11.8.4 String Literals
-    void scanStringLiteral(Scanner::ScannerResult* token);
+    void scanStringLiteral(Scanner<SourceReader>::ScannerResult* token);
 
     // ECMA-262 11.6 Names and Keywords
-    ALWAYS_INLINE void scanIdentifier(Scanner::ScannerResult* token, char16_t ch0);
+    ALWAYS_INLINE void scanIdentifier(Scanner<SourceReader>::ScannerResult* token, char16_t ch0);
 
     String* scanRegExpBody();
     String* scanRegExpFlags();
 };
+
+class SourceReaderAny {
+public:
+    char16_t operator()(const StringBufferAccessData& d, const size_t& idx)
+    {
+        return d.charAt(idx);
+    }
+};
+
+class SourceReader8Bit {
+public:
+    char16_t operator()(const StringBufferAccessData& d, const size_t& idx)
+    {
+        return d.uncheckedCharAtFor8Bit(idx);
+    }
+};
+
+class SourceReader16Bit {
+public:
+    char16_t operator()(const StringBufferAccessData& d, const size_t& idx)
+    {
+        return d.uncheckedCharAtFor16Bit(idx);
+    }
+};
+
 }
 }
 
