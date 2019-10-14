@@ -474,17 +474,14 @@ void ErrorHandler::throwError(size_t index, size_t line, size_t col, String* des
     throw * error;
 };
 
-StringView Scanner::SmallScannerResult::relatedSource(const StringView& source) const
+template<typename SourceReader>
+StringView Scanner<SourceReader>::ScannerResult::relatedSource(const StringView& source) const
 {
     return StringView(source, this->start, this->end);
 }
 
-StringView Scanner::ScannerResult::relatedSource(const StringView& source)
-{
-    return StringView(source, this->start, this->end);
-}
-
-Value Scanner::ScannerResult::valueStringLiteralForAST(Scanner* scannerInstance)
+template<typename SourceReader>
+Value Scanner<SourceReader>::ScannerResult::valueStringLiteralForAST(Scanner<SourceReader>* scannerInstance)
 {
     StringView sv = valueStringLiteral(scannerInstance);
     if (!this->hasAllocatedString) {
@@ -493,25 +490,30 @@ Value Scanner::ScannerResult::valueStringLiteralForAST(Scanner* scannerInstance)
     return sv.string();
 }
 
-StringView Scanner::ScannerResult::valueStringLiteral(Scanner* scannerInstance)
+template<typename SourceReader>
+StringView Scanner<SourceReader>::ScannerResult::valueStringLiteral(Scanner<SourceReader>* scannerInstance)
 {
     if (this->type == Token::KeywordToken && !this->hasKeywordButUseString) {
         AtomicString as = keywordToString(scannerInstance->escargotContext, this->valueKeywordKind);
         return StringView(as.string(), 0, as.string()->length());
     }
     if (this->hasAllocatedString) {
-        if (!this->valueStringLiteralData.m_stringIfNewlyAllocated) {
+        if (!this->valueStringIfNewlyAllocated) {
             constructStringLiteral(scannerInstance);
         }
-        return StringView(this->valueStringLiteralData.m_stringIfNewlyAllocated);
+        return StringView(this->valueStringIfNewlyAllocated);
     }
-    return StringView(scannerInstance->source, this->valueStringLiteralData.m_start, this->valueStringLiteralData.m_end);
+    if (this->type == Token::StringLiteralToken) {
+        return StringView(scannerInstance->source, this->start + 1, this->end - 1);
+    }
+    return StringView(scannerInstance->source, this->start, this->end);
 }
 
-double Scanner::ScannerResult::valueNumberLiteral(Scanner* scannerInstance)
+template<typename SourceReader>
+double Scanner<SourceReader>::ScannerResult::valueNumberLiteral(Scanner<SourceReader>* scannerInstance)
 {
     if (this->hasNonComputedNumberLiteral) {
-        const auto& bd = scannerInstance->source.bufferAccessData();
+        const auto& bd = scannerInstance->sourceBufferAccessData;
         char* buffer;
         int length = this->end - this->start;
 
@@ -531,15 +533,17 @@ double Scanner::ScannerResult::valueNumberLiteral(Scanner* scannerInstance)
                                                                  | double_conversion::StringToDoubleConverter::ALLOW_TRAILING_SPACES,
                                                              0.0, double_conversion::Double::NaN(),
                                                              "Infinity", "NaN");
-        double ll = converter.StringToDouble(buffer, length, &lengthDummy);
-
-        this->valueNumber = ll;
-        this->hasNonComputedNumberLiteral = false;
+        return converter.StringToDouble(buffer, length, &lengthDummy);
     }
-    return this->valueNumber;
+
+    if (this->hasIntegerNumberLiteral) {
+        return this->valueInteger;
+    }
+    return *this->valueNumber;
 }
 
-void Scanner::ScannerResult::constructStringLiteralHelperAppendUTF16(Scanner* scannerInstance, char16_t ch, UTF16StringDataNonGCStd& stringUTF16, bool& isEveryCharLatin1)
+template<typename SourceReader>
+void Scanner<SourceReader>::ScannerResult::constructStringLiteralHelperAppendUTF16(Scanner<SourceReader>* scannerInstance, char16_t ch, UTF16StringDataNonGCStd& stringUTF16, bool& isEveryCharLatin1)
 {
     switch (ch) {
     case 'u':
@@ -592,7 +596,8 @@ void Scanner::ScannerResult::constructStringLiteralHelperAppendUTF16(Scanner* sc
     }
 }
 
-void Scanner::ScannerResult::constructStringLiteral(Scanner* scannerInstance)
+template<typename SourceReader>
+void Scanner<SourceReader>::ScannerResult::constructStringLiteral(Scanner<SourceReader>* scannerInstance)
 {
     size_t indexBackup = scannerInstance->index;
     size_t lineNumberBackup = scannerInstance->lineNumber;
@@ -647,11 +652,13 @@ void Scanner::ScannerResult::constructStringLiteral(Scanner* scannerInstance)
     } else {
         newStr = new UTF16String(stringUTF16.data(), stringUTF16.length());
     }
-    this->valueStringLiteralData.m_stringIfNewlyAllocated = newStr;
+    this->valueStringIfNewlyAllocated = newStr;
 }
 
-Scanner::Scanner(::Escargot::Context* escargotContext, StringView code, size_t startLine, size_t startColumn)
+template<typename SourceReader>
+Scanner<SourceReader>::Scanner(::Escargot::Context* escargotContext, StringView code, size_t startLine, size_t startColumn)
     : source(code)
+    , sourceBufferAccessData(code.bufferAccessData())
     , escargotContext(escargotContext)
     , length(code.length())
     , index(0)
@@ -662,7 +669,8 @@ Scanner::Scanner(::Escargot::Context* escargotContext, StringView code, size_t s
     // trackComment = false;
 }
 
-void Scanner::skipSingleLineComment(void)
+template<typename SourceReader>
+void Scanner<SourceReader>::skipSingleLineComment(void)
 {
     while (!this->eof()) {
         char16_t ch = this->peekChar();
@@ -680,7 +688,8 @@ void Scanner::skipSingleLineComment(void)
     }
 }
 
-void Scanner::skipMultiLineComment(void)
+template<typename SourceReader>
+void Scanner<SourceReader>::skipMultiLineComment(void)
 {
     while (!this->eof()) {
         char16_t ch = this->peekChar();
@@ -702,7 +711,8 @@ void Scanner::skipMultiLineComment(void)
     throwUnexpectedToken();
 }
 
-char32_t Scanner::scanHexEscape(char prefix)
+template<typename SourceReader>
+char32_t Scanner<SourceReader>::scanHexEscape(char prefix)
 {
     size_t len = (prefix == 'u') ? 4 : 2;
     char32_t code = 0;
@@ -719,7 +729,8 @@ char32_t Scanner::scanHexEscape(char prefix)
     return code;
 }
 
-char32_t Scanner::scanUnicodeCodePointEscape()
+template<typename SourceReader>
+char32_t Scanner<SourceReader>::scanUnicodeCodePointEscape()
 {
     char16_t ch = this->peekChar();
     char32_t code = 0;
@@ -745,7 +756,8 @@ char32_t Scanner::scanUnicodeCodePointEscape()
     return code;
 }
 
-Scanner::ScanIDResult Scanner::getIdentifier()
+template<typename SourceReader>
+ScannerIDResult Scanner<SourceReader>::getIdentifier()
 {
     const size_t start = this->index;
     ++this->index;
@@ -767,7 +779,7 @@ Scanner::ScanIDResult Scanner::getIdentifier()
         }
     }
 
-    const auto& srcData = this->source.bufferAccessData();
+    const auto& srcData = this->sourceBufferAccessData;
     StringBufferAccessData ad;
 
     ad.has8BitContent = srcData.has8BitContent;
@@ -781,7 +793,8 @@ Scanner::ScanIDResult Scanner::getIdentifier()
     return std::make_tuple(ad, nullptr);
 }
 
-Scanner::ScanIDResult Scanner::getComplexIdentifier()
+template<typename SourceReader>
+ScannerIDResult Scanner<SourceReader>::getComplexIdentifier()
 {
     char32_t cp = this->codePointAt(this->index);
     ParserCharPiece piece = ParserCharPiece(cp);
@@ -848,7 +861,8 @@ Scanner::ScanIDResult Scanner::getComplexIdentifier()
     return std::make_tuple(str->bufferAccessData(), str);
 }
 
-uint16_t Scanner::octalToDecimal(char16_t ch, bool octal)
+template<typename SourceReader>
+uint16_t Scanner<SourceReader>::octalToDecimal(char16_t ch, bool octal)
 {
     // \0 is not octal escape sequence
     char16_t code = octalValue(ch);
@@ -873,7 +887,8 @@ uint16_t Scanner::octalToDecimal(char16_t ch, bool octal)
     return octal ? code : NON_OCTAL_VALUE;
 };
 
-void Scanner::scanPunctuator(Scanner::ScannerResult* token, char16_t ch)
+template<typename SourceReader>
+void Scanner<SourceReader>::scanPunctuator(Scanner<SourceReader>::ScannerResult* token, char16_t ch)
 {
     const size_t start = this->index;
     PunctuatorKind kind;
@@ -891,7 +906,7 @@ void Scanner::scanPunctuator(Scanner::ScannerResult* token, char16_t ch)
 
     case '.':
         kind = Period;
-        if (this->peekChar() == '.' && this->source.bufferedCharAt(this->index + 1) == '.') {
+        if (this->peekChar() == '.' && this->sourceCharAt(this->index + 1) == '.') {
             // Spread operator "..."
             this->index += 2;
             kind = PeriodPeriodPeriod;
@@ -1100,7 +1115,8 @@ void Scanner::scanPunctuator(Scanner::ScannerResult* token, char16_t ch)
     token->setPunctuatorResult(this->lineNumber, this->lineStart, start, this->index, kind);
 }
 
-void Scanner::scanHexLiteral(Scanner::ScannerResult* token, size_t start)
+template<typename SourceReader>
+void Scanner<SourceReader>::scanHexLiteral(Scanner<SourceReader>::ScannerResult* token, size_t start)
 {
     ASSERT(token != nullptr);
     uint64_t number = 0;
@@ -1145,7 +1161,8 @@ void Scanner::scanHexLiteral(Scanner::ScannerResult* token, size_t start)
     }
 }
 
-void Scanner::scanBinaryLiteral(Scanner::ScannerResult* token, size_t start)
+template<typename SourceReader>
+void Scanner<SourceReader>::scanBinaryLiteral(Scanner<SourceReader>::ScannerResult* token, size_t start)
 {
     ASSERT(token != nullptr);
     uint64_t number = 0;
@@ -1177,7 +1194,8 @@ void Scanner::scanBinaryLiteral(Scanner::ScannerResult* token, size_t start)
     token->setNumericLiteralResult(number, this->lineNumber, this->lineStart, start, this->index, false);
 }
 
-void Scanner::scanOctalLiteral(Scanner::ScannerResult* token, char16_t prefix, size_t start)
+template<typename SourceReader>
+void Scanner<SourceReader>::scanOctalLiteral(Scanner::ScannerResult* token, char16_t prefix, size_t start)
 {
     ASSERT(token != nullptr);
     uint64_t number = 0;
@@ -1208,12 +1226,13 @@ void Scanner::scanOctalLiteral(Scanner::ScannerResult* token, char16_t prefix, s
     token->octal = octal;
 }
 
-bool Scanner::isImplicitOctalLiteral()
+template<typename SourceReader>
+bool Scanner<SourceReader>::isImplicitOctalLiteral()
 {
     // Implicit octal, unless there is a non-octal digit.
     // (Annex B.1.1 on Numeric Literals)
     for (size_t i = this->index + 1; i < this->length; ++i) {
-        const char16_t ch = this->source.bufferedCharAt(i);
+        const char16_t ch = this->sourceCharAt(i);
         if (ch == '8' || ch == '9') {
             return false;
         }
@@ -1224,7 +1243,8 @@ bool Scanner::isImplicitOctalLiteral()
     return true;
 }
 
-void Scanner::scanNumericLiteral(Scanner::ScannerResult* token)
+template<typename SourceReader>
+void Scanner<SourceReader>::scanNumericLiteral(Scanner::ScannerResult* token)
 {
     ASSERT(token != nullptr);
     const size_t start = this->index;
@@ -1308,7 +1328,8 @@ void Scanner::scanNumericLiteral(Scanner::ScannerResult* token)
     }
 }
 
-void Scanner::scanStringLiteral(Scanner::ScannerResult* token)
+template<typename SourceReader>
+void Scanner<SourceReader>::scanStringLiteral(Scanner::ScannerResult* token)
 {
     ASSERT(token != nullptr);
     const size_t start = this->index;
@@ -1381,14 +1402,15 @@ void Scanner::scanStringLiteral(Scanner::ScannerResult* token)
     }
 
     if (isPlainCase) {
-        token->setResult(Token::StringLiteralToken, start + 1, this->index - 1, this->lineNumber, this->lineStart, start, this->index, octal);
+        token->setStringViewKindResult(Token::StringLiteralToken, this->lineNumber, this->lineStart, start, this->index, octal);
     } else {
         // build string if needs
         token->setResult(Token::StringLiteralToken, (String*)nullptr, this->lineNumber, this->lineStart, start, this->index, octal);
     }
 }
 
-bool Scanner::isFutureReservedWord(const StringView& id)
+template<typename SourceReader>
+bool Scanner<SourceReader>::isFutureReservedWord(const StringView& id)
 {
     const StringBufferAccessData& data = id.bufferAccessData();
     switch (data.length) {
@@ -1402,7 +1424,8 @@ bool Scanner::isFutureReservedWord(const StringView& id)
     return false;
 }
 
-void Scanner::scanTemplate(Scanner::ScannerResult* token, bool head)
+template<typename SourceReader>
+void Scanner<SourceReader>::scanTemplate(Scanner::ScannerResult* token, bool head)
 {
     ASSERT(token != nullptr);
     // TODO apply rope-string
@@ -1494,7 +1517,7 @@ void Scanner::scanTemplate(Scanner::ScannerResult* token, bool head)
                 }
                 auto endIndex = this->index;
                 for (size_t i = currentIndex; i < endIndex; i++) {
-                    raw += this->source.bufferedCharAt(i);
+                    raw += this->sourceCharAt(i);
                 }
             } else {
                 ++this->index;
@@ -1545,7 +1568,8 @@ void Scanner::scanTemplate(Scanner::ScannerResult* token, bool head)
     token->setTemplateTokenResult(result, this->lineNumber, this->lineStart, start, this->index);
 }
 
-String* Scanner::scanRegExpBody()
+template<typename SourceReader>
+String* Scanner<SourceReader>::scanRegExpBody()
 {
     char16_t ch = this->peekChar();
     ASSERT(ch == '/');
@@ -1599,7 +1623,8 @@ String* Scanner::scanRegExpBody()
     return new UTF16String(str.data(), str.length());
 }
 
-String* Scanner::scanRegExpFlags()
+template<typename SourceReader>
+String* Scanner<SourceReader>::scanRegExpFlags()
 {
     // UTF16StringData str = '';
     UTF16StringDataNonGCStd flags;
@@ -1646,7 +1671,8 @@ String* Scanner::scanRegExpFlags()
     return new UTF16String(flags.data(), flags.length());
 }
 
-void Scanner::scanRegExp(Scanner::ScannerResult* token)
+template<typename SourceReader>
+void Scanner<SourceReader>::scanRegExp(Scanner::ScannerResult* token)
 {
     ASSERT(token != nullptr);
     const size_t start = this->index;
@@ -1655,15 +1681,15 @@ void Scanner::scanRegExp(Scanner::ScannerResult* token)
     String* flags = this->scanRegExpFlags();
     // const value = this->testRegExp(body.value, flags.value);
 
-    ScanRegExpResult result;
-    result.body = body;
-    result.flags = flags;
+    ScanRegExpResult* result = new ScanRegExpResult();
+    result->body = body;
+    result->flags = flags;
     token->setResult(Token::RegularExpressionToken, this->lineNumber, this->lineStart, start, this->index);
     token->valueRegexp = result;
 }
 
 // ECMA-262 11.6.2.1 Keywords
-static ALWAYS_INLINE KeywordKind isKeyword(const StringBufferAccessData& data)
+static NEVER_INLINE void isKeyword(const StringBufferAccessData& data, KeywordKind& keywordKind, Token& tokenKind)
 {
     // 'const' is specialized as Keyword in V8.
     // 'yield' and 'let' are for compatibility with SpiderMonkey and ES.next.
@@ -1675,48 +1701,50 @@ static ALWAYS_INLINE KeywordKind isKeyword(const StringBufferAccessData& data)
     switch (first) {
     case 'a':
         if (length == 5 && data.equalsSameLength("await", 1)) {
-            return AwaitKeyword;
+            tokenKind = Token::KeywordToken; keywordKind = AwaitKeyword;
+            return;
         }
         break;
     case 'b':
         if (length == 5 && data.equalsSameLength("break", 1)) {
-            return BreakKeyword;
+            tokenKind = Token::KeywordToken; keywordKind = BreakKeyword;
+            return;
         }
         break;
     case 'c':
         if (length == 4) {
             if (data.equalsSameLength("case", 1)) {
-                return CaseKeyword;
+                tokenKind = Token::KeywordToken; keywordKind = CaseKeyword; return;
             }
         } else if (length == 5) {
             second = data.charAt(1);
             if (second == 'a' && data.equalsSameLength("catch", 2)) {
-                return CatchKeyword;
+                tokenKind = Token::KeywordToken; keywordKind = CatchKeyword; return;
             } else if (second == 'o' && data.equalsSameLength("const", 2)) {
-                return ConstKeyword;
+                tokenKind = Token::KeywordToken; keywordKind = ConstKeyword; return;
             } else if (second == 'l' && data.equalsSameLength("class", 2)) {
-                return ClassKeyword;
+                tokenKind = Token::KeywordToken; keywordKind = ClassKeyword; return;
             }
         } else if (length == 8 && data.equalsSameLength("continue", 1)) {
-            return ContinueKeyword;
+            tokenKind = Token::KeywordToken; keywordKind = ContinueKeyword; return;
         }
         break;
     case 'd':
         if (length == 8) {
             if (data.equalsSameLength("debugger", 1)) {
-                return DebuggerKeyword;
+                tokenKind = Token::KeywordToken; keywordKind = DebuggerKeyword; return;
             }
         } else if (length == 2) {
             if (data.equalsSameLength("do", 1)) {
-                return DoKeyword;
+                tokenKind = Token::KeywordToken; keywordKind = DoKeyword; return;
             }
         } else if (length == 6) {
             if (data.equalsSameLength("delete", 1)) {
-                return DeleteKeyword;
+                tokenKind = Token::KeywordToken; keywordKind = DeleteKeyword; return;
             }
         } else if (length == 7) {
             if (data.equalsSameLength("default", 1)) {
-                return DefaultKeyword;
+                tokenKind = Token::KeywordToken; keywordKind = DefaultKeyword; return;
             }
         }
         break;
@@ -1724,149 +1752,164 @@ static ALWAYS_INLINE KeywordKind isKeyword(const StringBufferAccessData& data)
         if (length == 4) {
             second = data.charAt(1);
             if (second == 'l' && data.equalsSameLength("else", 2)) {
-                return ElseKeyword;
+                tokenKind = Token::KeywordToken; keywordKind = ElseKeyword; return;
             } else if (second == 'n' && data.equalsSameLength("enum", 2)) {
-                return EnumKeyword;
+                tokenKind = Token::KeywordToken; keywordKind = EnumKeyword; return;
             }
         } else if (length == 6 && data.equalsSameLength("export", 1)) {
-            return ExportKeyword;
+            tokenKind = Token::KeywordToken; keywordKind = ExportKeyword; return;
         } else if (length == 7 && data.equalsSameLength("extends", 1)) {
-            return ExtendsKeyword;
+            tokenKind = Token::KeywordToken; keywordKind = ExtendsKeyword; return;
         }
         break;
     case 'f':
-        if (length == 3 && data.equalsSameLength("for", 1)) {
-            return ForKeyword;
-        } else if (length == 7 && data.equalsSameLength("finally", 1)) {
-            return FinallyKeyword;
-        } else if (length == 8 && data.equalsSameLength("function", 1)) {
-            return FunctionKeyword;
+        switch (length) {
+        case 3:
+            if (data.equalsSameLength("for", 1)) {
+                tokenKind = Token::KeywordToken; keywordKind = ForKeyword; return;
+            }
+            break;
+        case 5:
+            if (data.equalsSameLength("false", 1)) {
+                tokenKind = Token::BooleanLiteralToken; keywordKind = NotKeyword; return;
+            }
+            break;
+        case 7:
+            if (data.equalsSameLength("finally", 1)) {
+                tokenKind = Token::KeywordToken; keywordKind = FinallyKeyword; return;
+            }
+            break;
+        case 8:
+            if (length == 8 && data.equalsSameLength("function", 1)) {
+                tokenKind = Token::KeywordToken; keywordKind = FunctionKeyword; return;
+            }
+            break;
         }
         break;
     case 'i':
         if (length == 2) {
             second = data.charAt(1);
             if (second == 'f') {
-                return IfKeyword;
+                tokenKind = Token::KeywordToken; keywordKind = IfKeyword; return;
             } else if (second == 'n') {
-                return InKeyword;
+                tokenKind = Token::KeywordToken; keywordKind = InKeyword; return;
             }
         } else if (length == 6 && data.equalsSameLength("import", 1)) {
-            return ImportKeyword;
+            tokenKind = Token::KeywordToken; keywordKind = ImportKeyword; return;
         } else if (length == 10 && data.equalsSameLength("instanceof", 1)) {
-            return InstanceofKeyword;
+            tokenKind = Token::KeywordToken; keywordKind = InstanceofKeyword; return;
         }
         break;
     case 'l':
         if (length == 3 && data.equalsSameLength("let", 1)) {
-            return LetKeyword;
+            tokenKind = Token::KeywordToken; keywordKind = LetKeyword; return;
         }
         break;
     case 'n':
         if (length == 3 && data.equalsSameLength("new", 1)) {
-            return NewKeyword;
+            tokenKind = Token::KeywordToken; keywordKind = NewKeyword; return;
+        }
+        if (length == 4 && data.equalsSameLength("null", 1)) {
+            tokenKind = Token::NullLiteralToken; keywordKind = NotKeyword; return;
         }
         break;
     case 'r':
         if (length == 6 && data.equalsSameLength("return", 1)) {
-            return ReturnKeyword;
+            tokenKind = Token::KeywordToken; keywordKind = ReturnKeyword; return;
         }
         break;
     case 's':
         if (length == 5 && data.equalsSameLength("super", 1)) {
-            return SuperKeyword;
+            tokenKind = Token::KeywordToken; keywordKind = SuperKeyword; return;
         } else if (length == 6 && data.equalsSameLength("switch", 1)) {
-            return SwitchKeyword;
+            tokenKind = Token::KeywordToken; keywordKind = SwitchKeyword; return;
         }
         break;
     case 't':
         switch (length) {
         case 3:
             if (data.equalsSameLength("try", 1)) {
-                return TryKeyword;
+                tokenKind = Token::KeywordToken; keywordKind = TryKeyword; return;
             }
             break;
         case 4:
             if (data.equalsSameLength("this", 1)) {
-                return ThisKeyword;
+                tokenKind = Token::KeywordToken; keywordKind = ThisKeyword; return;
+            }
+            if (data.equalsSameLength("true", 1)) {
+                tokenKind = Token::BooleanLiteralToken; keywordKind = NotKeyword; return;
             }
             break;
         case 5:
             if (data.equalsSameLength("throw", 1)) {
-                return ThrowKeyword;
+                tokenKind = Token::KeywordToken; keywordKind = ThrowKeyword; return;
             }
             break;
         case 6:
             if (data.equalsSameLength("typeof", 1)) {
-                return TypeofKeyword;
+                tokenKind = Token::KeywordToken; keywordKind = TypeofKeyword; return;
             }
             break;
         }
         break;
     case 'v':
         if (length == 3 && data.equalsSameLength("var", 1)) {
-            return VarKeyword;
+            tokenKind = Token::KeywordToken; keywordKind = VarKeyword; return;
         } else if (length == 4 && data.equalsSameLength("void", 1)) {
-            return VoidKeyword;
+            tokenKind = Token::KeywordToken; keywordKind = VoidKeyword; return;
         }
         break;
     case 'w':
         if (length == 4 && data.equalsSameLength("with", 1)) {
-            return WithKeyword;
+            tokenKind = Token::KeywordToken; keywordKind = WithKeyword; return;
         } else if (length == 5 && data.equalsSameLength("while", 1)) {
-            return WhileKeyword;
+            tokenKind = Token::KeywordToken; keywordKind = WhileKeyword; return;
         }
         break;
     case 'y':
         if (length == 5 && data.equalsSameLength("yield", 1)) {
-            return YieldKeyword;
+            tokenKind = Token::KeywordToken; keywordKind = YieldKeyword; return;
         }
         break;
     }
-    return NotKeyword;
+
+    keywordKind = NotKeyword;
+    tokenKind = Token::IdentifierToken;
 }
 
-ALWAYS_INLINE void Scanner::scanIdentifier(Scanner::ScannerResult* token, char16_t ch0)
+template<typename SourceReader>
+ALWAYS_INLINE void Scanner<SourceReader>::scanIdentifier(Scanner::ScannerResult* token, char16_t ch0)
 {
-    ASSERT(token != nullptr);
     Token type;
+    KeywordKind keywordKind;
     const size_t start = this->index;
 
     // Backslash (U+005C) starts an escaped character.
-    ScanIDResult id = UNLIKELY(ch0 == 0x5C) ? this->getComplexIdentifier() : this->getIdentifier();
+    ScannerIDResult id = UNLIKELY(ch0 == 0x5C) ? this->getComplexIdentifier() : this->getIdentifier();
     const size_t end = this->index;
 
-    // There is no keyword or literal with only one character.
-    // Thus, it must be an identifier.
-    KeywordKind keywordKind;
-    const auto& data = std::get<0>(id);
-    if (data.length == 1) {
-        type = Token::IdentifierToken;
-    } else if ((keywordKind = isKeyword(data))) {
-        token->setKeywordResult(this->lineNumber, this->lineStart, start, this->index, keywordKind);
-        return;
-    } else if (data.length == 4) {
-        if (data.equalsSameLength("null")) {
-            type = Token::NullLiteralToken;
-        } else if (data.equalsSameLength("true")) {
-            type = Token::BooleanLiteralToken;
-        } else {
-            type = Token::IdentifierToken;
+    if (UNLIKELY(std::get<1>(id) != nullptr)) {
+        String* s = std::get<1>(id);
+        isKeyword(s->bufferAccessData(), keywordKind, type);
+        if (type != Token::IdentifierToken) {
+            ErrorHandler::throwError(this->index, this->lineNumber, this->index - this->lineStart + 1, new ASCIIString("Keyword must not contain escaped characters"), ErrorObject::SyntaxError);
         }
-    } else if (data.length == 5 && data.equalsSameLength("false")) {
-        type = Token::BooleanLiteralToken;
-    } else {
-        type = Token::IdentifierToken;
+        token->setResult(Token::IdentifierToken, std::get<1>(id), this->lineNumber, this->lineStart, start, end);
+        return;
     }
 
-    if (UNLIKELY(std::get<1>(id) != nullptr)) {
-        token->setResult(type, std::get<1>(id), this->lineNumber, this->lineStart, start, end);
+    const auto& data = std::get<0>(id);
+    isKeyword(data, keywordKind, type);
+
+    if (keywordKind) {
+        token->setKeywordResult(this->lineNumber, this->lineStart, start, this->index, keywordKind);
     } else {
-        token->setResult(type, start, end, this->lineNumber, this->lineStart, start, end);
+        token->setStringViewKindResult(type, this->lineNumber, this->lineStart, start, end);
     }
 }
 
-void Scanner::lex(Scanner::ScannerResult* token)
+template<typename SourceReader>
+void Scanner<SourceReader>::lex(Scanner::ScannerResult* token)
 {
     ASSERT(token != nullptr);
     if (UNLIKELY(this->eof())) {
@@ -1888,7 +1931,7 @@ void Scanner::lex(Scanner::ScannerResult* token)
 
     // Dot (.) U+002E can also start a floating-point number, hence the need
     // to check the next character.
-    if (UNLIKELY(cp == 0x2E) && isDecimalDigit(this->source.bufferedCharAt(this->index + 1))) {
+    if (UNLIKELY(cp == 0x2E) && isDecimalDigit(this->sourceCharAt(this->index + 1))) {
         this->scanNumericLiteral(token);
         return;
     }
@@ -1915,4 +1958,9 @@ ScanID:
     this->scanIdentifier(token, cp);
     return;
 }
+
+template class Scanner<SourceReaderAny>;
+template class Scanner<SourceReader8Bit>;
+template class Scanner<SourceReader16Bit>;
+
 }

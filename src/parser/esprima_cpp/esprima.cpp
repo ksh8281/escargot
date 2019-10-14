@@ -47,7 +47,7 @@
 #include "parser/Script.h"
 #include "parser/ASTBuilder.h"
 
-#define ALLOC_TOKEN(tokenName) Scanner::ScannerResult* tokenName = ALLOCA(sizeof(Scanner::ScannerResult), Scanner::ScannerResult, ec);
+#define ALLOC_TOKEN(tokenName) ScannerResult* tokenName = ALLOCA(sizeof(ScannerResult), ScannerResult, ec);
 
 #define ASTNode typename ASTBuilder::ASTNode
 #define ASTPassNode typename ASTBuilder::ASTPassNode
@@ -62,6 +62,7 @@ using namespace Escargot::EscargotLexer;
 namespace Escargot {
 namespace esprima {
 
+template<typename SourceReader>
 struct Context {
     // Escargot::esprima::Context always allocated on the stack
     MAKE_STACK_ALLOCATED();
@@ -83,7 +84,7 @@ struct Context {
     bool inParameterParsing : 1;
     bool hasRestrictedWordInArrayOrObjectInitializer : 1;
     bool strict : 1;
-    Scanner::SmallScannerResult firstCoverInitializedNameError;
+    typename Scanner<SourceReader>::ScannerResult firstCoverInitializedNameError;
     std::vector<AtomicString> catchClauseSimplyDeclaredVariableNames;
     std::vector<std::pair<AtomicString, bool>> labelSet; // <LabelString, continue accepted>
 };
@@ -113,27 +114,30 @@ struct DeclarationOptions {
     KeywordKind kind;
 };
 
+template<typename SourceReader>
 class Parser {
 public:
     // Parser always allocated on the stack
     MAKE_STACK_ALLOCATED();
 
     ::Escargot::Context* escargotContext;
-    Scanner* scanner;
-    Scanner scannerInstance;
+    Scanner<SourceReader>* scanner;
+    Scanner<SourceReader> scannerInstance;
 
     enum SourceType {
         Script,
         Module
     };
 
+    using ScannerResult = typename Scanner<SourceReader>::ScannerResult;
+
     SourceType sourceType;
-    Scanner::ScannerResult lookahead;
+    ScannerResult lookahead;
 
     Script::ModuleData* moduleData;
 
-    Context contextInstance;
-    Context* context;
+    Context<SourceReader> contextInstance;
+    Context<SourceReader>* context;
 
     CodeBlock* codeBlock;
     Marker baseMarker;
@@ -163,8 +167,8 @@ public:
     struct ParseFormalParametersResult {
         SyntaxNodeVector params;
         std::vector<AtomicString> paramSet;
-        Scanner::SmallScannerResult stricted;
-        Scanner::SmallScannerResult firstRestricted;
+        ScannerResult stricted;
+        ScannerResult firstRestricted;
         const char* message;
         bool valid;
 
@@ -256,7 +260,7 @@ public:
             this->startMarker.lineNumber = this->scanner->lineNumber;
             this->startMarker.lineStart = this->scanner->lineStart;
 
-            Scanner::ScannerResult* next = &this->lookahead;
+            ScannerResult* next = &this->lookahead;
             this->scanner->lex(next);
             this->hasLineTerminator = false;
 
@@ -471,7 +475,7 @@ public:
     }
 
     // Throw an exception because of an unexpected token.
-    void throwUnexpectedToken(const Scanner::SmallScannerResult& token, const char* message = nullptr)
+    void throwUnexpectedToken(const ScannerResult& token, const char* message = nullptr)
     {
         ASSERT(token);
         const char* msg;
@@ -526,7 +530,7 @@ public:
         this->scanner->scanComments();
     }
 
-    void nextToken(Scanner::ScannerResult* token = nullptr)
+    void nextToken(ScannerResult* token = nullptr)
     {
         if (token) {
             *token = this->lookahead;
@@ -543,7 +547,7 @@ public:
         this->startMarker.lineNumber = this->scanner->lineNumber;
         this->startMarker.lineStart = this->scanner->lineStart;
 
-        Scanner::ScannerResult* next = &this->lookahead;
+        ScannerResult* next = &this->lookahead;
         this->scanner->lex(next);
         this->hasLineTerminator = tokenLineNumber != next->lineNumber;
 
@@ -559,7 +563,7 @@ public:
         */
     }
 
-    void nextRegexToken(Scanner::ScannerResult* token)
+    void nextRegexToken(ScannerResult* token)
     {
         ASSERT(token != nullptr);
         this->collectComments();
@@ -580,17 +584,7 @@ public:
         return n;
     }
 
-    MetaNode startNode(Scanner::ScannerResult* token)
-    {
-        ASSERT(token != nullptr);
-        MetaNode n;
-        n.index = token->start + this->baseMarker.index;
-        n.line = token->lineNumber;
-        n.column = token->start - token->lineStart;
-        return n;
-    }
-
-    MetaNode startNode(Scanner::SmallScannerResult* token)
+    MetaNode startNode(ScannerResult* token)
     {
         ASSERT(token != nullptr);
         MetaNode n;
@@ -708,7 +702,7 @@ public:
         }
     }
 
-    bool qualifiedPropertyName(Scanner::ScannerResult* token)
+    bool qualifiedPropertyName(ScannerResult* token)
     {
         switch (token->type) {
         case Token::IdentifierToken:
@@ -782,12 +776,12 @@ public:
     // the flags outside of the parser. This means the production the parser parses is used as a part of a potential
     // pattern. The CoverInitializedName check is deferred.
 
-    typedef std::vector<Scanner::SmallScannerResult> SmallScannerResultVector;
+    typedef std::vector<ScannerResult> ScannerResultVector;
 
     struct IsolateCoverGrammarContext {
         bool previousIsBindingElement;
         bool previousIsAssignmentTarget;
-        Scanner::SmallScannerResult previousFirstCoverInitializedNameError;
+        ScannerResult previousFirstCoverInitializedNameError;
     };
 
     void checkRecursiveLimit()
@@ -879,7 +873,7 @@ public:
     }
 
     template <class ASTBuilder>
-    ASTIdentifierNode finishIdentifier(ASTBuilder& builder, Scanner::ScannerResult* token)
+    ASTIdentifierNode finishIdentifier(ASTBuilder& builder, ScannerResult* token)
     {
         ASSERT(token != nullptr);
         ASTIdentifierNode ret;
@@ -998,7 +992,7 @@ public:
                 ALLOC_TOKEN(token);
                 this->nextRegexToken(token);
                 // raw = this->getTokenRaw(token);
-                return this->finalize(node, builder.createRegExpLiteralNode(token->valueRegexp.body, token->valueRegexp.flags));
+                return this->finalize(node, builder.createRegExpLiteralNode(token->valueRegexp->body, token->valueRegexp->flags));
             }
             default: {
                 ALLOC_TOKEN(token);
@@ -1047,7 +1041,7 @@ public:
         return ASTPassNode();
     }
 
-    void validateParam(ParseFormalParametersResult& options, const Scanner::SmallScannerResult& param, AtomicString name)
+    void validateParam(ParseFormalParametersResult& options, const ScannerResult& param, AtomicString name)
     {
         ASSERT(param);
         if (this->context->strict) {
@@ -1076,7 +1070,7 @@ public:
     }
 
     template <class ASTBuilder>
-    ASTPassNode parseRestElement(ASTBuilder& builder, SmallScannerResultVector& params)
+    ASTPassNode parseRestElement(ASTBuilder& builder, ScannerResultVector& params)
     {
         MetaNode node = this->createNode();
 
@@ -1092,7 +1086,7 @@ public:
     }
 
     template <class ASTBuilder>
-    ASTPassNode parseBindingRestElement(ASTBuilder& builder, SmallScannerResultVector& params, KeywordKind kind = KeywordKindEnd, bool isExplicitVariableDeclaration = false)
+    ASTPassNode parseBindingRestElement(ASTBuilder& builder, ScannerResultVector& params, KeywordKind kind = KeywordKindEnd, bool isExplicitVariableDeclaration = false)
     {
         MetaNode node = this->createNode();
         this->expect(PeriodPeriodPeriod);
@@ -1103,7 +1097,7 @@ public:
     // ECMA-262 13.3.3 Destructuring Binding Patterns
 
     template <class ASTBuilder>
-    ASTPassNode parseArrayPattern(ASTBuilder& builder, SmallScannerResultVector& params, KeywordKind kind = KeywordKindEnd, bool isExplicitVariableDeclaration = false)
+    ASTPassNode parseArrayPattern(ASTBuilder& builder, ScannerResultVector& params, KeywordKind kind = KeywordKindEnd, bool isExplicitVariableDeclaration = false)
     {
         MetaNode node = this->createNode();
 
@@ -1131,7 +1125,7 @@ public:
     }
 
     template <class ASTBuilder>
-    ASTPassNode parsePropertyPattern(ASTBuilder& builder, SmallScannerResultVector& params, KeywordKind kind = KeywordKindEnd, bool isExplicitVariableDeclaration = false)
+    ASTPassNode parsePropertyPattern(ASTBuilder& builder, ScannerResultVector& params, KeywordKind kind = KeywordKindEnd, bool isExplicitVariableDeclaration = false)
     {
         MetaNode node = this->createNode();
 
@@ -1178,7 +1172,7 @@ public:
     }
 
     template <class ASTBuilder>
-    ASTPassNode parseObjectPattern(ASTBuilder& builder, SmallScannerResultVector& params, KeywordKind kind = KeywordKindEnd, bool isExplicitVariableDeclaration = false)
+    ASTPassNode parseObjectPattern(ASTBuilder& builder, ScannerResultVector& params, KeywordKind kind = KeywordKindEnd, bool isExplicitVariableDeclaration = false)
     {
         MetaNode node = this->createNode();
         ASTNodeVector properties;
@@ -1197,7 +1191,7 @@ public:
     }
 
     template <class ASTBuilder>
-    ASTPassNode parsePattern(ASTBuilder& builder, SmallScannerResultVector& params, KeywordKind kind = KeywordKindEnd, bool isExplicitVariableDeclaration = false)
+    ASTPassNode parsePattern(ASTBuilder& builder, ScannerResultVector& params, KeywordKind kind = KeywordKindEnd, bool isExplicitVariableDeclaration = false)
     {
         if (this->match(LeftSquareBracket)) {
             return this->parseArrayPattern(builder, params, kind, isExplicitVariableDeclaration);
@@ -1213,7 +1207,7 @@ public:
     }
 
     template <class ASTBuilder>
-    ASTPassNode parsePatternWithDefault(ASTBuilder& builder, SmallScannerResultVector& params, KeywordKind kind = KeywordKindEnd, bool isExplicitVariableDeclaration = false)
+    ASTPassNode parsePatternWithDefault(ASTBuilder& builder, ScannerResultVector& params, KeywordKind kind = KeywordKindEnd, bool isExplicitVariableDeclaration = false)
     {
         ALLOC_TOKEN(startToken);
         *startToken = this->lookahead;
@@ -1236,7 +1230,7 @@ public:
         ASTNode param;
         bool trackUsingNamesBefore = this->trackUsingNames;
         this->trackUsingNames = false;
-        SmallScannerResultVector params;
+        ScannerResultVector params;
         ALLOC_TOKEN(token);
         *token = this->lookahead;
 
@@ -1257,7 +1251,7 @@ public:
     }
 
     template <class ASTBuilder>
-    ParseFormalParametersResult parseFormalParameters(ASTBuilder& builder, Scanner::SmallScannerResult* firstRestricted = nullptr)
+    ParseFormalParametersResult parseFormalParameters(ASTBuilder& builder, ScannerResult* firstRestricted = nullptr)
     {
         this->context->inParameterParsing = true;
         ParseFormalParametersResult options;
@@ -1701,7 +1695,7 @@ public:
         } else {
             ALLOC_TOKEN(startToken);
             *startToken = this->lookahead;
-            SmallScannerResultVector params;
+            ScannerResultVector params;
             if (this->match(PeriodPeriodPeriod)) {
                 exprNode = this->parseRestElement(builder, params);
                 this->expect(RightParenthesis);
@@ -1828,7 +1822,7 @@ public:
         return args;
     }
 
-    bool isIdentifierName(Scanner::ScannerResult* token)
+    bool isIdentifierName(ScannerResult* token)
     {
         ASSERT(token != nullptr);
         return token->type == Token::IdentifierToken || token->type == Token::KeywordToken || token->type == Token::BooleanLiteralToken || token->type == Token::NullLiteralToken;
@@ -2182,7 +2176,7 @@ public:
     // ECMA-262 12.12 Binary Bitwise Operators
     // ECMA-262 12.13 Binary Logical Operators
 
-    int binaryPrecedence(const Scanner::ScannerResult* token)
+    int binaryPrecedence(const ScannerResult* token)
     {
         ASSERT(token != nullptr);
         if (LIKELY(token->type == Token::PunctuatorToken)) {
@@ -2264,16 +2258,16 @@ public:
             this->context->isAssignmentTarget = false;
             this->context->isBindingElement = false;
 
-            typedef VectorWithInlineStorage<8, Scanner::SmallScannerResult, std::allocator<Scanner::SmallScannerResult>> SmallScannerResultVectorWithInlineStorage;
+            typedef VectorWithInlineStorage<8, ScannerResult, std::allocator<ScannerResult>> ScannerResultVectorWithInlineStorage;
 
-            SmallScannerResultVectorWithInlineStorage markers;
+            ScannerResultVectorWithInlineStorage markers;
             markers.push_back(*startToken);
             markers.push_back(this->lookahead);
             ASTNode left = expr;
             ASTNode right = this->isolateCoverGrammar(builder, &Parser::parseExponentiationExpression<ASTBuilder>);
 
             VectorWithInlineStorage<8, ASTNode, std::allocator<ASTNode>> stack;
-            SmallScannerResultVectorWithInlineStorage tokenStack;
+            ScannerResultVectorWithInlineStorage tokenStack;
 
             stack.push_back(left);
             stack.push_back(right);
@@ -2289,7 +2283,7 @@ public:
                 while ((stack.size() > 1) && (prec <= tokenStack.back().prec)) {
                     right = stack.back();
                     stack.pop_back();
-                    Scanner::SmallScannerResult operator_ = tokenStack.back();
+                    ScannerResult operator_ = tokenStack.back();
                     tokenStack.pop_back();
                     left = stack.back();
                     stack.pop_back();
@@ -2325,7 +2319,7 @@ public:
     }
 
     template <class ASTBuilder>
-    ASTNodePtr finishBinaryExpression(ASTBuilder& builder, ASTNodePtr left, ASTNodePtr right, Scanner::SmallScannerResult* token)
+    ASTNodePtr finishBinaryExpression(ASTBuilder& builder, ASTNodePtr left, ASTNodePtr right, ScannerResult* token)
     {
         if (token->type == Token::PunctuatorToken) {
             PunctuatorKind oper = token->valuePunctuatorKind;
@@ -2898,7 +2892,7 @@ public:
     ASTPassNode parseLexicalBinding(ASTBuilder& builder, KeywordKind kind, bool inFor)
     {
         auto node = this->createNode();
-        SmallScannerResultVector params;
+        ScannerResultVector params;
         ASTNode idNode;
         bool isIdentifier;
         AtomicString name;
@@ -3045,7 +3039,7 @@ public:
     template <class ASTBuilder>
     ASTPassNode parseVariableDeclaration(ASTBuilder& builder, DeclarationOptions& options, bool& hasInit, ASTNodeType& leftSideType)
     {
-        SmallScannerResultVector params;
+        ScannerResultVector params;
         ASTNode idNode;
         bool isIdentifier;
         AtomicString name;
@@ -3311,7 +3305,7 @@ public:
                 const bool previousAllowLexicalDeclaration = this->context->allowLexicalDeclaration;
                 this->context->allowLexicalDeclaration = true;
 
-                Scanner::ScannerResult keyword = this->lookahead;
+                ScannerResult keyword = this->lookahead;
                 KeywordKind kind = keyword.valueKeywordKind;
                 this->nextToken();
 
@@ -3749,7 +3743,7 @@ public:
 
         ParserBlockContext catchBlockContext = openBlock();
 
-        SmallScannerResultVector params;
+        ScannerResultVector params;
         ASTNode param = this->parsePattern(builder, params, KeywordKind::LetKeyword);
 
         if (this->context->strict && param->type() == Identifier) {
@@ -4139,7 +4133,7 @@ public:
 
         const char* message = nullptr;
         ASTNode id;
-        Scanner::SmallScannerResult firstRestricted;
+        ScannerResult firstRestricted;
 
         {
             ALLOC_TOKEN(token);
@@ -4180,7 +4174,7 @@ public:
         this->context->inArrowFunction = false;
 
         ParseFormalParametersResult formalParameters = this->parseFormalParameters(builder, &firstRestricted);
-        Scanner::SmallScannerResult stricted = formalParameters.stricted;
+        ScannerResult stricted = formalParameters.stricted;
         firstRestricted = formalParameters.firstRestricted;
         if (formalParameters.message) {
             message = formalParameters.message;
@@ -4217,7 +4211,7 @@ public:
 
         const char* message = nullptr;
         ASTNode id;
-        Scanner::SmallScannerResult firstRestricted;
+        ScannerResult firstRestricted;
 
         bool previousAllowYield = this->context->allowYield;
         bool previousInArrowFunction = this->context->inArrowFunction;
@@ -4259,7 +4253,7 @@ public:
         this->currentScopeContext->m_paramsStartLOC.line = paramsStart.line;
 
         ParseFormalParametersResult formalParameters = this->parseFormalParameters(builder, &firstRestricted);
-        Scanner::SmallScannerResult stricted = formalParameters.stricted;
+        ScannerResult stricted = formalParameters.stricted;
         firstRestricted = formalParameters.firstRestricted;
         if (formalParameters.message) {
             message = formalParameters.message;
@@ -4315,7 +4309,7 @@ public:
     {
         ASSERT(container);
         bool useStrict = false;
-        Scanner::SmallScannerResult firstRestricted;
+        ScannerResult firstRestricted;
 
         ALLOC_TOKEN(token);
         while (true) {
@@ -5258,9 +5252,10 @@ public:
     }
 };
 
+template<typename SourceReader>
 RefPtr<ProgramNode> parseProgram(::Escargot::Context* ctx, StringView source, bool isModule, bool strictFromOutside, bool inWith, size_t stackRemain, bool allowSuperCallOutside, bool allowSuperPropertyOutside)
 {
-    Parser parser(ctx, source, isModule, stackRemain);
+    Parser<SourceReader> parser(ctx, source, isModule, stackRemain);
     NodeGenerator builder;
 
     parser.context->strict = strictFromOutside;
@@ -5272,9 +5267,19 @@ RefPtr<ProgramNode> parseProgram(::Escargot::Context* ctx, StringView source, bo
     return nd;
 }
 
+RefPtr<ProgramNode> parseProgram(::Escargot::Context* ctx, StringView source, bool isModule, bool strictFromOutside, bool inWith, size_t stackRemain, bool allowSuperCallOutside, bool allowSuperPropertyOutside)
+{
+    if (source.is8Bit()) {
+        return parseProgram<SourceReader8Bit>(ctx, source, isModule, strictFromOutside, inWith, stackRemain, allowSuperCallOutside, allowSuperPropertyOutside);
+    } else {
+        return parseProgram<SourceReader16Bit>(ctx, source, isModule, strictFromOutside, inWith, stackRemain, allowSuperCallOutside, allowSuperPropertyOutside);
+    }
+}
+
+template<typename SourceReader>
 RefPtr<FunctionNode> parseSingleFunction(::Escargot::Context* ctx, InterpretedCodeBlock* codeBlock, ASTFunctionScopeContext*& scopeContext, size_t stackRemain)
 {
-    Parser parser(ctx, codeBlock->src(), false, stackRemain, codeBlock->sourceElementStart());
+    Parser<SourceReader> parser(ctx, codeBlock->src(), false, stackRemain, codeBlock->sourceElementStart());
     NodeGenerator builder;
 
     parser.trackUsingNames = false;
@@ -5295,6 +5300,15 @@ RefPtr<FunctionNode> parseSingleFunction(::Escargot::Context* ctx, InterpretedCo
         return parser.parseScriptArrowFunction(builder, codeBlock->hasArrowParameterPlaceHolder());
     }
     return parser.parseScriptFunction(builder);
+}
+
+RefPtr<FunctionNode> parseSingleFunction(::Escargot::Context* ctx, InterpretedCodeBlock* codeBlock, ASTFunctionScopeContext*& scopeContext, size_t stackRemain)
+{
+    if (codeBlock->src().is8Bit()) {
+        return parseSingleFunction<SourceReader8Bit>(ctx, codeBlock, scopeContext, stackRemain);
+    } else {
+        return parseSingleFunction<SourceReader16Bit>(ctx, codeBlock, scopeContext, stackRemain);
+    }
 }
 
 } // namespace esprima

@@ -224,7 +224,7 @@ size_t Memory::totalSize()
 }
 
 static Memory::OnGCEventListener g_gcEventListener;
-void Memory::setEventEventListener(OnGCEventListener l)
+void Memory::setGCEventListener(OnGCEventListener l)
 {
     g_gcEventListener = l;
     GC_set_on_collection_event([](GC_EventType evtType) {
