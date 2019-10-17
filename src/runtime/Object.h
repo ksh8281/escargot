@@ -1016,9 +1016,9 @@ protected:
     }
     ObjectStructure* m_structure;
     Object* m_prototype;
-    TightVectorWithNoSize<SmallValue, GCUtil::gc_malloc_allocator<SmallValue>> m_values;
+    GCReallocTightVectorWithNoSize<SmallValue> m_values;
 
-    COMPILE_ASSERT(sizeof(TightVectorWithNoSize<SmallValue, GCUtil::gc_malloc_allocator<SmallValue>>) == sizeof(size_t) * 1, "");
+    COMPILE_ASSERT(sizeof(GCReallocTightVectorWithNoSize<SmallValue>) == sizeof(size_t) * 1, "");
 
     ObjectStructure* structure() const
     {
