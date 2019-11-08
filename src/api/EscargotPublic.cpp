@@ -2161,7 +2161,7 @@ PromiseObjectRef* PromiseObjectRef::catchOperation(ExecutionStateRef* state, Val
 
 PromiseObjectRef* PromiseObjectRef::then(ExecutionStateRef* state, ValueRef* onFulfilled, ValueRef* onRejected)
 {
-    return toRef(toImpl(this)->then(*toImpl(state), toImpl(onFulfilled), toImpl(onRejected)));
+    return toRef(toImpl(this)->then(*toImpl(state), toImpl(onFulfilled), toImpl(onRejected), toImpl(this)->newPromiseResultCapability(*toImpl(state))).value());
 }
 
 void PromiseObjectRef::fulfill(ExecutionStateRef* state, ValueRef* value)

@@ -48,7 +48,7 @@ static Value builtinFunctionConstructor(ExecutionState& state, Value thisValue, 
 
     size_t argumentVectorCount = argc > 1 ? argc - 1 : 0;
     Value sourceValue = argc >= 1 ? argv[argc - 1] : Value(String::emptyString);
-    auto functionSource = FunctionObject::createFunctionSourceFromScriptSource(state, state.context()->staticStrings().anonymous, argumentVectorCount, argv, sourceValue, false, false, false);
+    auto functionSource = FunctionObject::createFunctionSourceFromScriptSource(state, state.context()->staticStrings().anonymous, argumentVectorCount, argv, sourceValue, false, false, false, false);
 
     return new ScriptFunctionObject(state, functionSource.codeBlock, functionSource.outerEnvironment, true, false);
 }
@@ -64,7 +64,10 @@ static Value builtinFunctionToString(ExecutionState& state, Value thisValue, siz
             return fn->asScriptFunctionObject()->asScriptClassConstructorFunctionObject()->classSourceCode();
         } else {
             StringBuilder builder;
-            if (!fn->codeBlock()->isArrowFunctionExpression()) {
+            if (!fn->isScriptArrowFunctionObject()) {
+                if (fn->isScriptAsyncFunctionObject()) {
+                    builder.appendString("async ");
+                }
                 builder.appendString("function ");
                 if (!fn->codeBlock()->hasImplictFunctionName()) {
                     builder.appendString(fn->codeBlock()->functionName().string());

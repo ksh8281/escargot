@@ -584,7 +584,7 @@ void GlobalObject::installRegExp(ExecutionState& state)
         JSGetterSetter gs(
             new NativeFunctionObject(state, NativeFunctionInfo(state.context()->staticStrings().getSymbolSpecies, builtinSpeciesGetter, 0, NativeFunctionInfo::Strict)), Value(Value::EmptyValue));
         ObjectPropertyDescriptor desc(gs, ObjectPropertyDescriptor::ConfigurablePresent);
-        m_regexp->defineOwnProperty(state, ObjectPropertyName(state, state.context()->vmInstance()->globalSymbols().species), desc);
+        m_regexp->defineOwnProperty(state, ObjectPropertyName(state.context()->vmInstance()->globalSymbols().species), desc);
     }
 
     m_regexpPrototype = m_objectPrototype;
@@ -661,21 +661,21 @@ void GlobalObject::installRegExp(ExecutionState& state)
                                                         ObjectPropertyDescriptor(new NativeFunctionObject(state, NativeFunctionInfo(strings->compile, builtinRegExpCompile, 2, NativeFunctionInfo::Strict)), (ObjectPropertyDescriptor::PresentAttribute)(ObjectPropertyDescriptor::WritablePresent | ObjectPropertyDescriptor::ConfigurablePresent)));
 
     // $21.2.5.9 RegExp.prototype[@@search]
-    m_regexpPrototype->defineOwnPropertyThrowsException(state, ObjectPropertyName(state, state.context()->vmInstance()->globalSymbols().search),
+    m_regexpPrototype->defineOwnPropertyThrowsException(state, ObjectPropertyName(state.context()->vmInstance()->globalSymbols().search),
                                                         ObjectPropertyDescriptor(new NativeFunctionObject(state, NativeFunctionInfo(state.context()->staticStrings().symbolSearch, builtinRegExpSearch, 1, NativeFunctionInfo::Strict)), (ObjectPropertyDescriptor::PresentAttribute)(ObjectPropertyDescriptor::WritablePresent | ObjectPropertyDescriptor::ConfigurablePresent)));
 
     // $21.2.5.11 RegExp.prototype[@@split]
     m_regexpSplitMethod = new NativeFunctionObject(state, NativeFunctionInfo(state.context()->staticStrings().symbolSplit, builtinRegExpSplit, 1, NativeFunctionInfo::Strict));
-    m_regexpPrototype->defineOwnPropertyThrowsException(state, ObjectPropertyName(state, state.context()->vmInstance()->globalSymbols().split),
+    m_regexpPrototype->defineOwnPropertyThrowsException(state, ObjectPropertyName(state.context()->vmInstance()->globalSymbols().split),
                                                         ObjectPropertyDescriptor(m_regexpSplitMethod, (ObjectPropertyDescriptor::PresentAttribute)(ObjectPropertyDescriptor::WritablePresent | ObjectPropertyDescriptor::ConfigurablePresent)));
 
     // $21.2.5.8 RegExp.prototype [@@replace]
     m_regexpReplaceMethod = new NativeFunctionObject(state, NativeFunctionInfo(state.context()->staticStrings().symbolReplace, builtinRegExpReplace, 2, NativeFunctionInfo::Strict));
-    m_regexpPrototype->defineOwnPropertyThrowsException(state, ObjectPropertyName(state, state.context()->vmInstance()->globalSymbols().replace),
+    m_regexpPrototype->defineOwnPropertyThrowsException(state, ObjectPropertyName(state.context()->vmInstance()->globalSymbols().replace),
                                                         ObjectPropertyDescriptor(m_regexpReplaceMethod, (ObjectPropertyDescriptor::PresentAttribute)(ObjectPropertyDescriptor::WritablePresent | ObjectPropertyDescriptor::ConfigurablePresent)));
 
     // $21.2.5.6 RegExp.prototype[@@match]
-    m_regexpPrototype->defineOwnPropertyThrowsException(state, ObjectPropertyName(state, state.context()->vmInstance()->globalSymbols().match),
+    m_regexpPrototype->defineOwnPropertyThrowsException(state, ObjectPropertyName(state.context()->vmInstance()->globalSymbols().match),
                                                         ObjectPropertyDescriptor(new NativeFunctionObject(state, NativeFunctionInfo(state.context()->staticStrings().symbolMatch, builtinRegExpMatch, 1, NativeFunctionInfo::Strict)), (ObjectPropertyDescriptor::PresentAttribute)(ObjectPropertyDescriptor::WritablePresent | ObjectPropertyDescriptor::ConfigurablePresent)));
 
     defineOwnProperty(state, ObjectPropertyName(state.context()->staticStrings().RegExp),

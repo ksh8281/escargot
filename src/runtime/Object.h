@@ -38,6 +38,7 @@ class ArrayBufferView;
 class DataViewObject;
 template <typename TypeArg, int elementSize>
 class TypedArrayObject;
+class ExecutionPauser;
 
 extern size_t g_objectRareDataTag;
 
@@ -117,6 +118,12 @@ public:
             m_value.m_name = PropertyName(state, Value(v));
         }
 #endif
+    }
+
+    ObjectPropertyName(Symbol* symbol)
+    {
+        setUIntType(false);
+        m_value.m_name = PropertyName(symbol);
     }
 
     ObjectPropertyName(const AtomicString& v)

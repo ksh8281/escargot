@@ -37,7 +37,7 @@ void GlobalObject::installIterator(ExecutionState& state)
     m_iteratorPrototype->markThisObjectDontNeedStructureTransitionTable(state);
 
     FunctionObject* fn = new NativeFunctionObject(state, NativeFunctionInfo(AtomicString(state, String::fromASCII("[Symbol.iterator]")), builtinIteratorIterator, 0, NativeFunctionInfo::Strict));
-    m_iteratorPrototype->defineOwnPropertyThrowsException(state, ObjectPropertyName(state, state.context()->vmInstance()->globalSymbols().iterator),
+    m_iteratorPrototype->defineOwnPropertyThrowsException(state, ObjectPropertyName(state.context()->vmInstance()->globalSymbols().iterator),
                                                           ObjectPropertyDescriptor(fn,
                                                                                    (ObjectPropertyDescriptor::PresentAttribute)(ObjectPropertyDescriptor::WritablePresent | ObjectPropertyDescriptor::ConfigurablePresent)));
 }

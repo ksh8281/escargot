@@ -87,7 +87,7 @@ static Value builtinObjectToString(ExecutionState& state, Value thisValue, size_
     if (thisObject->isArray(state)) {
         builder.appendString("Array");
     } else {
-        Value toStringTag = thisObject->get(state, ObjectPropertyName(state, state.context()->vmInstance()->globalSymbols().toStringTag)).value(state, thisObject);
+        Value toStringTag = thisObject->get(state, ObjectPropertyName(state.context()->vmInstance()->globalSymbols().toStringTag)).value(state, thisObject);
         if (toStringTag.isString()) {
             builder.appendString(toStringTag.asString());
         } else {

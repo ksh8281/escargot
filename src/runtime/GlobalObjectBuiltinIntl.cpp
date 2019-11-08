@@ -458,7 +458,7 @@ void GlobalObject::installIntl(ExecutionState& state)
     m_intlCollator->getFunctionPrototype(state).asObject()->defineOwnProperty(state, state.context()->staticStrings().resolvedOptions,
                                                                               ObjectPropertyDescriptor(new NativeFunctionObject(state, NativeFunctionInfo(strings->resolvedOptions, builtinIntlCollatorResolvedOptions, 0, NativeFunctionInfo::Strict)), (ObjectPropertyDescriptor::PresentAttribute)(ObjectPropertyDescriptor::ConfigurablePresent | ObjectPropertyDescriptor::WritablePresent)));
 
-    m_intlCollator->getFunctionPrototype(state).asObject()->defineOwnProperty(state, ObjectPropertyName(state, state.context()->vmInstance()->globalSymbols().toStringTag),
+    m_intlCollator->getFunctionPrototype(state).asObject()->defineOwnProperty(state, ObjectPropertyName(state.context()->vmInstance()->globalSymbols().toStringTag),
                                                                               ObjectPropertyDescriptor(strings->Object.string(), (ObjectPropertyDescriptor::PresentAttribute)(ObjectPropertyDescriptor::ConfigurablePresent)));
 
     m_intlCollator->defineOwnProperty(state, state.context()->staticStrings().supportedLocalesOf,
