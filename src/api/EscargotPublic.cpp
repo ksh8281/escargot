@@ -308,6 +308,21 @@ StringRef* StringRef::createFromLatin1(const unsigned char* s, size_t len)
     return toRef(new Latin1String(s, len));
 }
 
+StringRef* StringRef::createExternalFromASCII(const char* s, size_t len)
+{
+    return toRef(new ASCIIString(s, len, String::FromExternalMemory));
+}
+
+StringRef* StringRef::createExternalFromLatin1(const unsigned char* s, size_t len)
+{
+    return toRef(new Latin1String(s, len, String::FromExternalMemory));
+}
+
+StringRef* StringRef::createExternalFromUTF16(const char16_t* s, size_t len)
+{
+    return toRef(new UTF16String(s, len, String::FromExternalMemory));
+}
+
 StringRef* StringRef::emptyString()
 {
     return toRef(String::emptyString);
