@@ -676,7 +676,7 @@ public:
         return m_symbolProxyObject;
     }
 
-    virtual bool isInlineCacheable()
+    virtual bool isInlineCacheable() override
     {
         return false;
     }
