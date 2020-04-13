@@ -914,6 +914,8 @@ public:
 
     bool set(ExecutionStateRef* state, ValueRef* propertyName, ValueRef* value);
 
+    bool has(ExecutionStateRef* state, ValueRef* propertyName);
+
     enum PresentAttribute {
         NotPresent = 0,
         WritablePresent = 1 << 1,

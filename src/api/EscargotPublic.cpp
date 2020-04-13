@@ -1089,6 +1089,11 @@ bool ObjectRef::set(ExecutionStateRef* state, ValueRef* propertyName, ValueRef* 
     return toImpl(this)->set(*toImpl(state), ObjectPropertyName(*toImpl(state), toImpl(propertyName)), toImpl(value), toImpl(this));
 }
 
+bool ObjectRef::has(ExecutionStateRef* state, ValueRef* propertyName)
+{
+    return toImpl(this)->hasProperty(*toImpl(state), ObjectPropertyName(*toImpl(state), toImpl(propertyName)));
+}
+
 bool ObjectRef::deleteOwnProperty(ExecutionStateRef* state, ValueRef* propertyName)
 {
     return toImpl(this)->deleteOwnProperty(*toImpl(state), ObjectPropertyName(*toImpl(state), toImpl(propertyName)));
