@@ -436,7 +436,8 @@ namespace Escargot {
     F(PluralRules)                \
     F(select)                     \
     F(formatToParts)              \
-    F(RelativeTimeFormat)
+    F(RelativeTimeFormat)         \
+    F(globalThis)
 
 #define FOR_EACH_STATIC_NUMBER(F) \
     F(0)                          \
