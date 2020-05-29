@@ -363,7 +363,6 @@ static Value builtinPromiseFinally(ExecutionState& state, Value thisValue, size_
     return Object::call(state, then, thisObject, 2, arguments);
 }
 
-
 static Value builtinPromiseThen(ExecutionState& state, Value thisValue, size_t argc, Value* argv, Optional<Object*> newTarget)
 {
     auto strings = &state.context()->staticStrings();
@@ -373,6 +372,152 @@ static Value builtinPromiseThen(ExecutionState& state, Value thisValue, size_t a
     PromiseReaction::Capability promiseCapability = PromiseObject::newPromiseCapability(state, C.asObject());
     return thisValue.asObject()->asPromiseObject()->then(state, argv[0], argv[1], promiseCapability).value();
 }
+
+/*
+// https://tc39.es/proposal-promise-allSettled/#sec-promise.allsettled-resolve-element-functions
+// A Promise.allSettled resolve element function is an anonymous built-in function that is used to resolve a specific Promise.allSettled element.
+// Each Promise.allSettled resolve element function has [[Index]], [[Values]], [[Capability]], [[RemainingElements]], and [[AlreadyCalled]] internal slots.
+static Value builtinPromiseAllSettledResolveElementFunction(ExecutionState& state, Value thisValue, size_t argc, Value* argv, Optional<Object*> newTarget);
+
+class PromiseAllSettledPromiseResolveElementFunctionObject : public NativeFunctionObject {
+public:
+    PromiseAllSettledPromiseResolveElementFunctionObject(ExecutionState& state, SmallValue index, ValueVector* values, PromiseReaction::Capability capability, size_t* remainingElements, bool* alreadyCalled)
+        : NativeFunctionObject(state, NativeFunctionInfo(AtomicString(), builtinPromiseAllSettledResolveElementFunction, 1, NativeFunctionInfo::Strict))
+        , m_index(index)
+        , m_values(values)
+        , m_capability(capability)
+        , m_remainingElements(remainingElements)
+        , m_alreadyCalled(alreadyCalled)
+    {
+    }
+
+    SmallValue m_index;
+    ValueVector* m_values;
+    PromiseReaction::Capability m_capability;
+    size_t* m_remainingElements;
+    bool* m_alreadyCalled;
+
+    static inline void fillGCDescriptor(GC_word* desc)
+    {
+        NativeFunctionObject::fillGCDescriptor(desc);
+
+        GC_set_bit(desc, GC_WORD_OFFSET(PromiseAllSettledPromiseResolveElementFunctionObject, m_values));
+        GC_set_bit(desc, GC_WORD_OFFSET(PromiseAllSettledPromiseResolveElementFunctionObject, m_capability.m_promise));
+        GC_set_bit(desc, GC_WORD_OFFSET(PromiseAllSettledPromiseResolveElementFunctionObject, m_capability.m_rejectFunction));
+        GC_set_bit(desc, GC_WORD_OFFSET(PromiseAllSettledPromiseResolveElementFunctionObject, m_capability.m_resolveFunction));
+        GC_set_bit(desc, GC_WORD_OFFSET(PromiseAllSettledPromiseResolveElementFunctionObject, m_remainingElements));
+        GC_set_bit(desc, GC_WORD_OFFSET(PromiseAllSettledPromiseResolveElementFunctionObject, m_alreadyCalled));
+    }
+};
+
+static Value builtinPromiseAllSettledResolveElementFunction(ExecutionState& state, Value thisValue, size_t argc, Value* argv, Optional<Object*> newTarget)
+{
+    // Let F be the active function object.
+    PromiseAllSettledPromiseResolveElementFunctionObject* F = (PromiseAllSettledPromiseResolveElementFunctionObject*)state.resolveCallee();
+    // Let alreadyCalled be F.[[AlreadyCalled]].
+    bool* alreadyCalled = F->m_alreadyCalled;
+    // If alreadyCalled.[[Value]] is true, return undefined.
+    if (*alreadyCalled) {
+        return Value();
+    }
+    // Set alreadyCalled.[[Value]] to true.
+    *alreadyCalled = true;
+    // Let index be F.[[Index]].
+    Value index = F->m_index;
+    // Let values be F.[[Values]].
+    ValueVector* values = F->m_values;
+    // Let promiseCapability be F.[[Capability]].
+    PromiseReaction::Capability& promiseCapability = F->m_capability;
+    // Let remainingElementsCount be F.[[RemainingElements]].
+    size_t* remainingElementsCount = F->m_remainingElements;
+    // Let obj be ! ObjectCreate(%ObjectPrototype%).
+    Object* obj = new Object(state);
+    // Perform ! CreateDataProperty(obj, "status", "fulfilled").
+    obj->defineOwnProperty(state, ObjectPropertyName(state.context()->staticStrings().status()), ObjectPropertyDescriptor(state.context()->staticStrings().fulfilled().string(), ObjectPropertyDescriptor::AllPresent));
+    // Perform ! CreateDataProperty(obj, "value", x).
+    obj->defineOwnProperty(state, ObjectPropertyName(state.context()->staticStrings().value), ObjectPropertyDescriptor(argv[0], ObjectPropertyDescriptor::AllPresent));
+    // Set values[index] to be obj.
+    values->at(index.asNumber()) = obj;
+    // Set remainingElementsCount.[[Value]] to remainingElementsCount.[[Value]] - 1.
+    *remainingElementsCount = *remainingElementsCount - 1;
+}
+
+// https://tc39.es/proposal-promise-allSettled/#sec-performpromiseallsettled
+static Value performPromiseAllSettled(ExecutionState& state, IteratorRecord* iteratorRecord, Object* constructor, PromiseReaction::Capability& resultCapability)
+{
+    // Assert: ! IsConstructor(constructor) is true.
+    // Assert: resultCapability is a PromiseCapability Record.
+    // Let values be a new empty List.
+    ValueVector values;
+    // Let remainingElementsCount be a new Record { [[Value]]: 1 }.
+    int64_t remainingElementsCount = 1;
+    // Let index be 0.
+    size_t index = 0;
+    // Let promiseResolve be ? Get(constructor, "resolve").
+    Value promiseResolve = constructor->get(state, ObjectPropertyName(state.context()->staticStrings().resolve)).value(state, constructor);
+    // If IsCallable(promiseResolve) is false, throw a TypeError exception.
+    if (!promiseResolve.isCallable()) {
+        ErrorObject::throwBuiltinError(state, ErrorObject::TypeError, "resolve function is not callable");
+    }
+
+    // Repeat,
+    while (true) {
+
+    }
+}
+
+// https://tc39.es/proposal-promise-allSettled/#sec-promise.allsettled
+static Value builtinPromiseAllSettled(ExecutionState& state, Value thisValue, size_t argc, Value* argv, Optional<Object*> newTarget)
+{
+    // Let C be the this value.
+    // If Type(C) is not Object, throw a TypeError exception.
+    if (!thisValue.isObject()) {
+        ErrorObject::throwBuiltinError(state, ErrorObject::TypeError, "this value of allSettled is not Object");
+    }
+    Object* C = thisValue.asObject();
+    // Let promiseCapability be ? NewPromiseCapability(C).
+    auto promiseCapability = PromiseObject::newPromiseCapability(state, C);
+    // Let iteratorRecord be GetIterator(iterable).
+    // IfAbruptRejectPromise(iteratorRecord, promiseCapability).
+    IteratorRecord* iteratorRecord;
+    try {
+        iteratorRecord = IteratorObject::getIterator(state, argv[0]);
+    } catch (const Value& v) {
+        Value thrownValue = v;
+        // If value is an abrupt completion,
+        // Perform ? Call(capability.[[Reject]], undefined, « value.[[Value]] »).
+        Object::call(state, promiseCapability.m_rejectFunction, Value(), 1, &thrownValue);
+        // Return capability.[[Promise]].
+        return promiseCapability.m_promise;
+    }
+
+    Value result;
+    // Let result be PerformPromiseAllSettled(iteratorRecord, C, promiseCapability).
+    try {
+        result = performPromiseAllSettled(state, iteratorRecord, C, promiseCapability);
+    } catch (const Value& v) {
+        Value exceptionValue = v;
+        // If result is an abrupt completion,
+        // If iteratorRecord.[[Done]] is false, set result to IteratorClose(iteratorRecord, result).
+        // IfAbruptRejectPromise(result, promiseCapability).
+        try {
+            if (!iteratorRecord->m_done) {
+                result = IteratorObject::iteratorClose(state, iteratorRecord, exceptionValue, true);
+            }
+        } catch (const Value& v) {
+            exceptionValue = v;
+            // IfAbruptRejectPromise(result, promiseCapability).
+            // If value is an abrupt completion,
+            // Perform ? Call(capability.[[Reject]], undefined, « value.[[Value]] »).
+            Object::call(state, promiseCapability.m_rejectFunction, Value(), 1, &exceptionValue);
+            // Return capability.[[Promise]].
+            return promiseCapability.m_promise;
+        }
+    }
+    // Return Completion(result).
+    return result;
+}
+*/
 
 void GlobalObject::installPromise(ExecutionState& state)
 {
@@ -427,6 +572,13 @@ void GlobalObject::installPromise(ExecutionState& state)
                                                          ObjectPropertyDescriptor(Value(state.context()->staticStrings().Promise.string()), (ObjectPropertyDescriptor::PresentAttribute)(ObjectPropertyDescriptor::NonWritablePresent | ObjectPropertyDescriptor::NonEnumerablePresent | ObjectPropertyDescriptor::ConfigurablePresent)));
 
     m_promise->setFunctionPrototype(state, m_promisePrototype);
+
+    /*
+    // Promise.allSettled ( iterable )
+    m_promise->defineOwnPropertyThrowsException(state, ObjectPropertyName(strings->allSettled),
+                                                         ObjectPropertyDescriptor(new NativeFunctionObject(state, NativeFunctionInfo(strings->allSettled, builtinPromiseAllSettled, 1, NativeFunctionInfo::Strict)),
+                                                                                  (ObjectPropertyDescriptor::PresentAttribute)(ObjectPropertyDescriptor::WritablePresent | ObjectPropertyDescriptor::ConfigurablePresent)));
+     */
 
     defineOwnProperty(state, ObjectPropertyName(strings->Promise),
                       ObjectPropertyDescriptor(m_promise, (ObjectPropertyDescriptor::PresentAttribute)(ObjectPropertyDescriptor::WritablePresent | ObjectPropertyDescriptor::ConfigurablePresent)));

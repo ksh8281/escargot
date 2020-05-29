@@ -42,7 +42,7 @@ public:
         internalSlots()[idx] = value;
     }
 
-    SmallValue& getInternalSlot(const size_t idx)
+    SmallValue& internalSlot(const size_t idx)
     {
         ASSERT(idx < slotCount());
         return internalSlots()[idx];

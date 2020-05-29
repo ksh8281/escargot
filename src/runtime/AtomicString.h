@@ -55,6 +55,8 @@ public:
         return AtomicString((String*)payload);
     }
 
+    AtomicString(AtomicStringMap* map, const char* src, size_t len);
+    AtomicString(AtomicStringMap* map, const char16_t* src, size_t len);
     AtomicString(ExecutionState& ec, String* name);
     AtomicString(ExecutionState& ec, const char16_t* src, size_t len);
     AtomicString(ExecutionState& ec, const char* src, size_t len);
@@ -94,24 +96,11 @@ public:
     }
 
 private:
+    void init(AtomicStringMap* ec, const char* src, size_t len);
+    void init(AtomicStringMap* ec, const LChar* str, size_t len);
+    void init(AtomicStringMap* ec, const char16_t* src, size_t len);
     void init(AtomicStringMap* ec, String* name);
     void initStaticString(AtomicStringMap* ec, String* name);
-    void init(AtomicStringMap* ec, const LChar* str, size_t len)
-    {
-        init(ec, new Latin1String(str, len));
-    }
-    void init(AtomicStringMap* ec, const char* str, size_t len)
-    {
-        init(ec, new ASCIIString(str, len));
-    }
-    void init(AtomicStringMap* ec, const char16_t* src, size_t len)
-    {
-        if (isAllASCII(src, len)) {
-            init(ec, new ASCIIString(src, len));
-        } else {
-            init(ec, new UTF16String(src, len));
-        }
-    }
     String* m_string;
 };
 

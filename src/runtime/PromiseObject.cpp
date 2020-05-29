@@ -234,7 +234,7 @@ Value PromiseObject::getCapabilitiesExecutorFunction(ExecutionState& state, Valu
     ExtendedNativeFunctionObject* executor = state.resolveCallee()->asExtendedNativeFunctionObject();
 
     // Let promiseCapability be F.[[Capability]].
-    Value capabilityValue = executor->getInternalSlot(PromiseObject::BuiltinFunctionSlot::Capability);
+    Value capabilityValue = executor->internalSlot(PromiseObject::BuiltinFunctionSlot::Capability);
     Object* capability = capabilityValue.asObject();
 
     // If promiseCapability.[[Resolve]] is not undefined, throw a TypeError exception.
@@ -262,11 +262,11 @@ static Value promiseResolveFunctions(ExecutionState& state, Value thisValue, siz
     ExtendedNativeFunctionObject* callee = state.resolveCallee()->asExtendedNativeFunctionObject();
 
     // Let promise be F.[[Promise]].
-    Value promiseValue = callee->getInternalSlot(PromiseObject::BuiltinFunctionSlot::Promise);
+    Value promiseValue = callee->internalSlot(PromiseObject::BuiltinFunctionSlot::Promise);
     PromiseObject* promise = promiseValue.asObject()->asPromiseObject();
 
     // Let alreadyResolved be F.[[AlreadyResolved]].
-    Value alreadyResolvedValue = callee->getInternalSlot(PromiseObject::BuiltinFunctionSlot::AlreadyResolved);
+    Value alreadyResolvedValue = callee->internalSlot(PromiseObject::BuiltinFunctionSlot::AlreadyResolved);
     Object* alreadyResolved = alreadyResolvedValue.asObject();
 
     // If alreadyResolved.[[Value]] is true, return undefined.
@@ -315,11 +315,11 @@ static Value promiseRejectFunctions(ExecutionState& state, Value thisValue, size
     ExtendedNativeFunctionObject* callee = state.resolveCallee()->asExtendedNativeFunctionObject();
 
     // Let promise be F.[[Promise]].
-    Value promiseValue = callee->getInternalSlot(PromiseObject::BuiltinFunctionSlot::Promise);
+    Value promiseValue = callee->internalSlot(PromiseObject::BuiltinFunctionSlot::Promise);
     PromiseObject* promise = promiseValue.asObject()->asPromiseObject();
 
     // Let alreadyResolved be F.[[AlreadyResolved]].
-    Value alreadyResolvedValue = callee->getInternalSlot(PromiseObject::BuiltinFunctionSlot::AlreadyResolved);
+    Value alreadyResolvedValue = callee->internalSlot(PromiseObject::BuiltinFunctionSlot::AlreadyResolved);
     Object* alreadyResolved = alreadyResolvedValue.asObject();
 
     // If alreadyResolved.[[Value]] is true, return undefined.
@@ -343,7 +343,7 @@ Value PromiseObject::promiseAllResolveElementFunction(ExecutionState& state, Val
     ExtendedNativeFunctionObject* callee = state.resolveCallee()->asExtendedNativeFunctionObject();
 
     // Let alreadyCalled be F.[[AlreadyCalled]].
-    Value alreadyCalled = callee->getInternalSlot(BuiltinFunctionSlot::AlreadyCalled);
+    Value alreadyCalled = callee->internalSlot(BuiltinFunctionSlot::AlreadyCalled);
 
     // If alreadyCalled.[[Value]] is true, return undefined.
     if (alreadyCalled.asObject()->getOwnProperty(state, strings->value).value(state, alreadyCalled).asBoolean()) {
@@ -352,10 +352,10 @@ Value PromiseObject::promiseAllResolveElementFunction(ExecutionState& state, Val
     // Set alreadyCalled.[[Value]] to true.
     alreadyCalled.asObject()->setThrowsException(state, strings->value, Value(true), alreadyCalled);
 
-    Value index = callee->getInternalSlot(BuiltinFunctionSlot::Index);
-    Value values = callee->getInternalSlot(BuiltinFunctionSlot::Values);
-    Value resolveFunction = callee->getInternalSlot(BuiltinFunctionSlot::Resolve);
-    Value remainingElementsCount = callee->getInternalSlot(BuiltinFunctionSlot::RemainingElements);
+    Value index = callee->internalSlot(BuiltinFunctionSlot::Index);
+    Value values = callee->internalSlot(BuiltinFunctionSlot::Values);
+    Value resolveFunction = callee->internalSlot(BuiltinFunctionSlot::Resolve);
+    Value remainingElementsCount = callee->internalSlot(BuiltinFunctionSlot::RemainingElements);
 
     // Set values[index] to x.
     values.asObject()->setThrowsException(state, ObjectPropertyName(state, index.asUInt32()), argv[0], values);
@@ -377,7 +377,7 @@ static Value ValueThunkHelper(ExecutionState& state, Value thisValue, size_t arg
     // Let F be the active function object.
     Object* F = state.resolveCallee();
     // Return the resolve's member value
-    return F->asExtendedNativeFunctionObject()->getInternalSlot(PromiseObject::BuiltinFunctionSlot::ValueOrReason);
+    return F->asExtendedNativeFunctionObject()->internalSlot(PromiseObject::BuiltinFunctionSlot::ValueOrReason);
 }
 
 
@@ -386,7 +386,7 @@ static Value ValueThunkThrower(ExecutionState& state, Value thisValue, size_t ar
     // Let F be the active function object.
     Object* F = state.resolveCallee();
     // Throw the resolve's member value
-    state.throwException(F->asExtendedNativeFunctionObject()->getInternalSlot(PromiseObject::BuiltinFunctionSlot::ValueOrReason));
+    state.throwException(F->asExtendedNativeFunctionObject()->internalSlot(PromiseObject::BuiltinFunctionSlot::ValueOrReason));
     return Value();
 }
 
@@ -398,7 +398,7 @@ Value PromiseObject::promiseThenFinally(ExecutionState& state, Value thisValue, 
     // Let F be the active function object.
     ExtendedNativeFunctionObject* F = state.resolveCallee()->asExtendedNativeFunctionObject();
     // Let onFinally be F.[[OnFinally]].
-    Value onFinally = F->getInternalSlot(BuiltinFunctionSlot::OnFinally);
+    Value onFinally = F->internalSlot(BuiltinFunctionSlot::OnFinally);
 
     // Assert: IsCallable(onFinally) is true.
     // Let result be ? Call(onFinally, undefined).
@@ -407,7 +407,7 @@ Value PromiseObject::promiseThenFinally(ExecutionState& state, Value thisValue, 
 
     // Let C be F.[[Constructor]].
     // Assert: IsConstructor(C) is true.
-    Value C = F->getInternalSlot(BuiltinFunctionSlot::Constructor);
+    Value C = F->internalSlot(BuiltinFunctionSlot::Constructor);
     ASSERT(C.isConstructor());
 
     // Let promise be ? PromiseResolve(C, result).
@@ -432,7 +432,7 @@ Value PromiseObject::promiseCatchFinally(ExecutionState& state, Value thisValue,
     // Let F be the active function object.
     ExtendedNativeFunctionObject* F = state.resolveCallee()->asExtendedNativeFunctionObject();
     // Let onFinally be F.[[OnFinally]].
-    Value onFinally = F->getInternalSlot(BuiltinFunctionSlot::OnFinally);
+    Value onFinally = F->internalSlot(BuiltinFunctionSlot::OnFinally);
 
     // Assert: IsCallable(onFinally) is true.
     // Let result be ? Call(onFinally, undefined).
@@ -441,7 +441,7 @@ Value PromiseObject::promiseCatchFinally(ExecutionState& state, Value thisValue,
 
     // Let C be F.[[Constructor]].
     // Assert: IsConstructor(C) is true.
-    Value C = F->getInternalSlot(BuiltinFunctionSlot::Constructor);
+    Value C = F->internalSlot(BuiltinFunctionSlot::Constructor);
     ASSERT(C.isConstructor());
 
     // Let promise be ? PromiseResolve(C, result).
