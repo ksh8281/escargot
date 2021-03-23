@@ -56,7 +56,7 @@ GlobalObject::GlobalObject(ExecutionState& state)
     m_objectPrototype = Object::createBuiltinObjectPrototype(state);
 
     Object::setPrototype(state, m_objectPrototype);
-    Object::setGlobalIntrinsicObject(state);
+    Object::setGlobalIntrinsicObject(state, false);
 }
 
 void GlobalObject::installBuiltins(ExecutionState& state)

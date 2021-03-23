@@ -300,6 +300,11 @@ public:
     virtual ObjectHasPropertyResult hasProperty(ExecutionState& state, const ObjectPropertyName& P) override ESCARGOT_OBJECT_SUBCLASS_MUST_REDEFINE;
     virtual ObjectGetResult getOwnProperty(ExecutionState& state, const ObjectPropertyName& P) override ESCARGOT_OBJECT_SUBCLASS_MUST_REDEFINE;
 
+    virtual void markThisObjectDontNeedStructureTransitionTable() override
+    {
+        m_structure = m_structure->convertToNonTransitionStructure(true);
+    }
+
     void* operator new(size_t size)
     {
         return GC_MALLOC(size);

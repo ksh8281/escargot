@@ -896,9 +896,9 @@ public:
         }
     }
 
-    void markThisObjectDontNeedStructureTransitionTable()
+    virtual void markThisObjectDontNeedStructureTransitionTable()
     {
-        m_structure = m_structure->convertToNonTransitionStructure();
+        m_structure = m_structure->convertToNonTransitionStructure(false);
     }
 
     static void nextIndexForward(ExecutionState& state, Object* obj, const int64_t cur, const int64_t len, int64_t& nextIndex);
@@ -908,7 +908,7 @@ public:
 
     virtual bool isInlineCacheable()
     {
-        return true;
+        return m_structure->shouldGenerateNewStructureWhenChanging();
     }
 
     ObjectRareData* ensureRareData()

@@ -133,47 +133,18 @@ public:
     virtual ObjectStructure* removeProperty(size_t pIndex) = 0;
     virtual ObjectStructure* replacePropertyDescriptor(size_t idx, const ObjectStructurePropertyDescriptor& newDesc) = 0;
 
-    virtual ObjectStructure* convertToNonTransitionStructure() = 0;
+    virtual ObjectStructure* convertToNonTransitionStructure(bool shouldGenerateNewStructureWhenChanging = false) = 0;
 
     virtual bool inTransitionMode() = 0;
     virtual bool hasIndexPropertyName() = 0;
-};
-
-class ObjectStructureWithoutTransition : public ObjectStructure {
-public:
-    ObjectStructureWithoutTransition(ObjectStructureItemVector* properties, bool hasIndexPropertyName, bool hasNonAtomicPropertyName)
-        : m_hasIndexPropertyName(hasIndexPropertyName)
-        , m_hasNonAtomicPropertyName(hasNonAtomicPropertyName)
-        , m_properties(properties)
+    virtual bool shouldGenerateNewStructureWhenChanging()
     {
+        return true;
     }
-
-    virtual std::pair<size_t, Optional<const ObjectStructureItem*>> findProperty(const ObjectStructurePropertyName& s) override;
-    virtual const ObjectStructureItem& readProperty(size_t idx) override;
-    virtual const ObjectStructureItem* properties() const override;
-    virtual size_t propertyCount() const override;
-    virtual ObjectStructure* addProperty(const ObjectStructurePropertyName& name, const ObjectStructurePropertyDescriptor& desc) override;
-    virtual ObjectStructure* removeProperty(size_t pIndex) override;
-    virtual ObjectStructure* replacePropertyDescriptor(size_t idx, const ObjectStructurePropertyDescriptor& newDesc) override;
-    virtual ObjectStructure* convertToNonTransitionStructure() override;
-
-    virtual bool inTransitionMode() override
+    virtual size_t version()
     {
-        return false;
+        return 0;
     }
-
-    virtual bool hasIndexPropertyName() override
-    {
-        return m_hasIndexPropertyName;
-    }
-
-    void* operator new(size_t size);
-    void* operator new[](size_t size) = delete;
-
-private:
-    bool m_hasIndexPropertyName;
-    bool m_hasNonAtomicPropertyName;
-    ObjectStructureItemVector* m_properties;
 };
 
 class ObjectStructureWithTransition : public ObjectStructure {
@@ -196,7 +167,7 @@ public:
     virtual ObjectStructure* addProperty(const ObjectStructurePropertyName& name, const ObjectStructurePropertyDescriptor& desc) override;
     virtual ObjectStructure* removeProperty(size_t pIndex) override;
     virtual ObjectStructure* replacePropertyDescriptor(size_t idx, const ObjectStructurePropertyDescriptor& newDesc) override;
-    virtual ObjectStructure* convertToNonTransitionStructure() override;
+    virtual ObjectStructure* convertToNonTransitionStructure(bool shouldGenerateNewStructureWhenChanging = false) override;
 
     virtual bool inTransitionMode() override
     {
@@ -238,18 +209,73 @@ private:
 COMPILE_ASSERT(ESCARGOT_OBJECT_STRUCTURE_TRANSITION_MAP_MIN_SIZE <= 32, "");
 COMPILE_ASSERT(sizeof(ObjectStructureWithTransition) == sizeof(size_t) * 5, "");
 
+class ObjectStructureWithoutTransition : public ObjectStructure {
+public:
+    ObjectStructureWithoutTransition(ObjectStructureItemVector* properties, bool shouldGenerateNewStructureWhenChanging, bool hasIndexPropertyName, bool hasNonAtomicPropertyName)
+        : m_shouldGenerateNewStructureWhenChanging(shouldGenerateNewStructureWhenChanging)
+        , m_hasIndexPropertyName(hasIndexPropertyName)
+        , m_hasNonAtomicPropertyName(hasNonAtomicPropertyName)
+        , m_version(0)
+        , m_properties(properties)
+    {
+    }
+
+    virtual std::pair<size_t, Optional<const ObjectStructureItem*>> findProperty(const ObjectStructurePropertyName& s) override;
+    virtual const ObjectStructureItem& readProperty(size_t idx) override;
+    virtual const ObjectStructureItem* properties() const override;
+    virtual size_t propertyCount() const override;
+    virtual ObjectStructure* addProperty(const ObjectStructurePropertyName& name, const ObjectStructurePropertyDescriptor& desc) override;
+    virtual ObjectStructure* removeProperty(size_t pIndex) override;
+    virtual ObjectStructure* replacePropertyDescriptor(size_t idx, const ObjectStructurePropertyDescriptor& newDesc) override;
+    virtual ObjectStructure* convertToNonTransitionStructure(bool shouldGenerateNewStructureWhenChanging = false) override;
+
+    virtual bool inTransitionMode() override
+    {
+        return false;
+    }
+
+    virtual bool hasIndexPropertyName() override
+    {
+        return m_hasIndexPropertyName;
+    }
+
+    virtual bool shouldGenerateNewStructureWhenChanging() override
+    {
+        return m_shouldGenerateNewStructureWhenChanging;
+    }
+
+    virtual size_t version() override
+    {
+        return m_version;
+    }
+
+    void* operator new(size_t size);
+    void* operator new[](size_t size) = delete;
+
+private:
+    bool m_shouldGenerateNewStructureWhenChanging : 1;
+    bool m_hasIndexPropertyName : 1;
+    bool m_hasNonAtomicPropertyName : 1;
+    uint16_t m_version : 16;
+    ObjectStructureItemVector* m_properties;
+};
+
 class ObjectStructureWithMap : public ObjectStructure {
 public:
-    ObjectStructureWithMap(ObjectStructureItemVector* properties, PropertyNameMap* map, bool hasIndexPropertyName)
-        : m_hasIndexPropertyName(hasIndexPropertyName)
+    ObjectStructureWithMap(ObjectStructureItemVector* properties, PropertyNameMap* map, bool shouldGenerateNewStructureWhenChanging, bool hasIndexPropertyName)
+        : m_shouldGenerateNewStructureWhenChanging(shouldGenerateNewStructureWhenChanging)
+        , m_hasIndexPropertyName(hasIndexPropertyName)
+        , m_version(0)
         , m_properties(properties)
         , m_propertyNameMap(map)
     {
     }
 
     template <typename SourceProperties>
-    ObjectStructureWithMap(bool hasIndexPropertyName, const SourceProperties& properties, const ObjectStructureItem& newItem)
-        : m_hasIndexPropertyName(hasIndexPropertyName)
+    ObjectStructureWithMap(bool shouldGenerateNewStructureWhenChanging, bool hasIndexPropertyName, const SourceProperties& properties, const ObjectStructureItem& newItem)
+        : m_shouldGenerateNewStructureWhenChanging(shouldGenerateNewStructureWhenChanging)
+        , m_hasIndexPropertyName(hasIndexPropertyName)
+        , m_version(0)
     {
         ObjectStructureItemVector* newProperties = new ObjectStructureItemVector();
         newProperties->resizeWithUninitializedValues(properties.size() + 1);
@@ -260,8 +286,10 @@ public:
         m_propertyNameMap = ObjectStructureWithMap::createPropertyNameMap(newProperties);
     }
 
-    ObjectStructureWithMap(bool hasIndexPropertyName, const ObjectStructureItemTightVector& properties)
-        : m_hasIndexPropertyName(hasIndexPropertyName)
+    ObjectStructureWithMap(bool shouldGenerateNewStructureWhenChanging, bool hasIndexPropertyName, const ObjectStructureItemTightVector& properties)
+        : m_shouldGenerateNewStructureWhenChanging(shouldGenerateNewStructureWhenChanging)
+        , m_hasIndexPropertyName(hasIndexPropertyName)
+        , m_version(0)
     {
         ObjectStructureItemVector* newProperties = new ObjectStructureItemVector();
         newProperties->resizeWithUninitializedValues(properties.size());
@@ -271,8 +299,10 @@ public:
         m_propertyNameMap = ObjectStructureWithMap::createPropertyNameMap(newProperties);
     }
 
-    ObjectStructureWithMap(bool hasIndexPropertyName, ObjectStructureItemTightVector&& properties)
-        : m_hasIndexPropertyName(hasIndexPropertyName)
+    ObjectStructureWithMap(bool shouldGenerateNewStructureWhenChanging, bool hasIndexPropertyName, ObjectStructureItemTightVector&& properties)
+        : m_shouldGenerateNewStructureWhenChanging(shouldGenerateNewStructureWhenChanging)
+        , m_hasIndexPropertyName(hasIndexPropertyName)
+        , m_version(0)
     {
         m_properties = new ObjectStructureItemVector(std::move(properties));
         m_propertyNameMap = ObjectStructureWithMap::createPropertyNameMap(m_properties);
@@ -285,7 +315,7 @@ public:
     virtual ObjectStructure* addProperty(const ObjectStructurePropertyName& name, const ObjectStructurePropertyDescriptor& desc) override;
     virtual ObjectStructure* removeProperty(size_t pIndex) override;
     virtual ObjectStructure* replacePropertyDescriptor(size_t idx, const ObjectStructurePropertyDescriptor& newDesc) override;
-    virtual ObjectStructure* convertToNonTransitionStructure() override;
+    virtual ObjectStructure* convertToNonTransitionStructure(bool shouldGenerateNewStructureWhenChanging = false) override;
 
     virtual bool inTransitionMode() override
     {
@@ -294,6 +324,16 @@ public:
     virtual bool hasIndexPropertyName() override
     {
         return m_hasIndexPropertyName;
+    }
+
+    virtual bool shouldGenerateNewStructureWhenChanging() override
+    {
+        return m_shouldGenerateNewStructureWhenChanging;
+    }
+
+    virtual size_t version() override
+    {
+        return m_version;
     }
 
     void* operator new(size_t size);
@@ -312,7 +352,9 @@ public:
     }
 
 private:
-    bool m_hasIndexPropertyName;
+    bool m_shouldGenerateNewStructureWhenChanging : 1;
+    bool m_hasIndexPropertyName : 1;
+    uint16_t m_version : 16;
     ObjectStructureItemVector* m_properties;
     PropertyNameMap* m_propertyNameMap;
 };

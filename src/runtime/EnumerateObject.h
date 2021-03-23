@@ -66,6 +66,7 @@ public:
     EnumerateObjectWithDestruction(ExecutionState& state, Object* obj)
         : EnumerateObject(obj)
         , m_hiddenClass(nullptr)
+        , m_version(0)
     {
         executeEnumeration(state, m_keys);
     }
@@ -80,6 +81,7 @@ protected:
     virtual bool checkIfModified(ExecutionState& state) override;
 
     ObjectStructure* m_hiddenClass;
+    size_t m_version;
 };
 
 // enumerate object for iteration operation (for-in)
@@ -99,7 +101,7 @@ protected:
     virtual void executeEnumeration(ExecutionState& state, EncodedValueVector& keys) override;
     virtual bool checkIfModified(ExecutionState& state) override;
 
-    Vector<ObjectStructure*, GCUtil::gc_malloc_allocator<ObjectStructure*>> m_hiddenClassChain;
+    Vector<std::pair<ObjectStructure*, size_t>, GCUtil::gc_malloc_allocator<std::pair<ObjectStructure*, size_t>>> m_hiddenClassChain;
 };
 } // namespace Escargot
 

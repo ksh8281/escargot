@@ -634,9 +634,7 @@ bool Object::defineOwnProperty(ExecutionState& state, const ObjectPropertyName& 
             return false;
         }
 
-        auto structureBefore = m_structure;
         m_structure = m_structure->addProperty(propertyName, desc.toObjectStructurePropertyDescriptor());
-        ASSERT(structureBefore != m_structure);
         if (LIKELY(desc.isDataProperty())) {
             const Value& val = desc.isValuePresent() ? desc.value() : Value();
             m_values.pushBack(val, m_structure->propertyCount());

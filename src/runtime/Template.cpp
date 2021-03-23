@@ -111,7 +111,7 @@ ObjectStructure* Template::constructObjectStructure(Context* ctx, ObjectStructur
 
     ObjectStructure* newObjectStructure;
     if (propertyCount > ESCARGOT_OBJECT_STRUCTURE_ACCESS_CACHE_BUILD_MIN_SIZE) {
-        newObjectStructure = new ObjectStructureWithMap(hasIndexStringAsPropertyName, std::move(structureItemVector));
+        newObjectStructure = new ObjectStructureWithMap(false, hasIndexStringAsPropertyName, std::move(structureItemVector));
     } else {
         newObjectStructure = new ObjectStructureWithTransition(std::move(structureItemVector), hasIndexStringAsPropertyName, hasNonAtomicPropertyName);
     }

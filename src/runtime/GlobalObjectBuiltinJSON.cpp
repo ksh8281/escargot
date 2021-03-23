@@ -139,7 +139,7 @@ static Value parseJSONWorker(ExecutionState& state, rapidjson::GenericValue<JSON
         return arr;
     } else if (value.IsObject()) {
         Object* obj = new Object(state);
-        obj->markThisObjectDontNeedStructureTransitionTable();
+        // obj->markThisObjectDontNeedStructureTransitionTable();
         auto iter = value.MemberBegin();
         while (iter != value.MemberEnd()) {
             Value propertyName = parseJSONWorker<CharType, JSONCharType>(state, iter->name);
@@ -216,7 +216,7 @@ static Value builtinJSONParse(ExecutionState& state, Value thisValue, size_t arg
     Value reviver = argv[1];
     if (reviver.isCallable()) {
         Object* root = new Object(state);
-        root->markThisObjectDontNeedStructureTransitionTable();
+        // root->markThisObjectDontNeedStructureTransitionTable();
         root->defineOwnProperty(state, ObjectPropertyName(state, String::emptyString), ObjectPropertyDescriptor(unfiltered, ObjectPropertyDescriptor::AllPresent));
         std::function<Value(Value, const ObjectPropertyName&)> Walk;
         Walk = [&](Value holder, const ObjectPropertyName& name) -> Value {

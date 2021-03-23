@@ -119,6 +119,7 @@ void EnumerateObjectWithDestruction::executeEnumeration(ExecutionState& state, E
     }
 
     m_hiddenClass = m_object->structure();
+    m_version = m_hiddenClass->version();
 
     struct Properties {
         std::vector<Value::ValueIndex> indexes;
@@ -165,6 +166,10 @@ bool EnumerateObjectWithDestruction::checkIfModified(ExecutionState& state)
         return true;
     }
 
+    if (UNLIKELY(m_version != m_object->structure()->version())) {
+        return true;
+    }
+
     if (m_object->isArrayObject()) {
         if (UNLIKELY(m_object->asArrayObject()->arrayLength(state) != m_arrayLength)) {
             return true;
@@ -190,7 +195,7 @@ void EnumerateObjectWithIteration::executeEnumeration(ExecutionState& state, Enc
 
     bool shouldSearchProto = false;
 
-    m_hiddenClassChain.push_back(m_object->structure());
+    m_hiddenClassChain.push_back(std::make_pair(m_object->structure(), size_t(m_object->structure()->version())));
 
     std::unordered_set<String*, std::hash<String*>, std::equal_to<String*>, GCUtil::gc_malloc_allocator<String*>> keyStringSet;
 
@@ -208,7 +213,7 @@ void EnumerateObjectWithIteration::executeEnumeration(ExecutionState& state, Enc
                                           &shouldSearchProto);
         }
         ASSERT(!!proto.asObject()->structure());
-        m_hiddenClassChain.push_back(proto.asObject()->structure());
+        m_hiddenClassChain.push_back(std::make_pair(proto.asObject()->structure(), size_t(proto.asObject()->structure()->version())));
         proto = proto.asObject()->getPrototype(state);
     }
 
@@ -291,7 +296,10 @@ bool EnumerateObjectWithIteration::checkIfModified(ExecutionState& state)
     for (size_t i = 0; i < m_hiddenClassChain.size(); i++) {
         auto hc = m_hiddenClassChain[i];
         ObjectStructure* structure = obj->structure();
-        if (UNLIKELY(hc != structure)) {
+        if (UNLIKELY(hc.first != structure)) {
+            return true;
+        }
+        if (UNLIKELY(hc.second != structure->version())) {
             return true;
         }
         Value val = obj->getPrototype(state);

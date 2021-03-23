@@ -99,13 +99,30 @@ ObjectStructure* ObjectStructureWithoutTransition::addProperty(const ObjectStruc
     ObjectStructure* newStructure;
     m_properties->push_back(newItem);
 
-    if (m_properties->size() + 1 > ESCARGOT_OBJECT_STRUCTURE_ACCESS_CACHE_BUILD_MIN_SIZE) {
-        newStructure = new ObjectStructureWithMap(m_properties, ObjectStructureWithMap::createPropertyNameMap(m_properties), m_hasIndexPropertyName | nameIsIndexString);
-    } else {
-        newStructure = new ObjectStructureWithoutTransition(m_properties, nameIsIndexString, hasNonAtomicName);
-    }
+    if (m_shouldGenerateNewStructureWhenChanging) {
+        if (m_properties->size() + 1 > ESCARGOT_OBJECT_STRUCTURE_ACCESS_CACHE_BUILD_MIN_SIZE) {
+            newStructure = new ObjectStructureWithMap(m_properties, ObjectStructureWithMap::createPropertyNameMap(m_properties), m_shouldGenerateNewStructureWhenChanging, m_hasIndexPropertyName | nameIsIndexString);
+        } else {
+            newStructure = new ObjectStructureWithoutTransition(m_properties, m_shouldGenerateNewStructureWhenChanging, nameIsIndexString, hasNonAtomicName);
+        }
 
-    m_properties = nullptr;
+        m_properties = nullptr;
+    } else {
+        if (m_properties->size() + 1 > ESCARGOT_OBJECT_STRUCTURE_ACCESS_CACHE_BUILD_MIN_SIZE) {
+            newStructure = new ObjectStructureWithMap(m_properties, ObjectStructureWithMap::createPropertyNameMap(m_properties), m_shouldGenerateNewStructureWhenChanging, m_hasIndexPropertyName | nameIsIndexString);
+            m_properties = nullptr;
+        } else {
+            m_hasIndexPropertyName = nameIsIndexString;
+            m_hasNonAtomicPropertyName = hasNonAtomicName;
+            m_version++;
+            if (m_version == 0) { // overflow!
+                newStructure = new ObjectStructureWithoutTransition(m_properties, m_shouldGenerateNewStructureWhenChanging, nameIsIndexString, hasNonAtomicName);
+                m_properties = nullptr;
+            } else {
+                newStructure = this;
+            }
+        }
+    }
     return newStructure;
 }
 
@@ -128,21 +145,51 @@ ObjectStructure* ObjectStructureWithoutTransition::removeProperty(size_t pIndex)
         newIdx++;
     }
 
-    auto newStructure = new ObjectStructureWithoutTransition(newProperties, hasIndexString, hasNonAtomicName);
-    m_properties = nullptr;
-    return newStructure;
+    if (m_shouldGenerateNewStructureWhenChanging) {
+        auto newStructure = new ObjectStructureWithoutTransition(newProperties, m_shouldGenerateNewStructureWhenChanging, hasIndexString, hasNonAtomicName);
+        m_properties = nullptr;
+        return newStructure;
+    } else {
+        m_properties = newProperties;
+        m_hasIndexPropertyName = hasIndexString;
+        m_hasNonAtomicPropertyName = hasNonAtomicName;
+
+        m_version++;
+        if (m_version == 0) { // overflow!
+            auto newStructure = new ObjectStructureWithoutTransition(m_properties, m_shouldGenerateNewStructureWhenChanging, m_hasIndexPropertyName, m_hasNonAtomicPropertyName);
+            m_properties = nullptr;
+            return newStructure;
+        } else {
+            return this;
+        }
+    }
 }
 
 ObjectStructure* ObjectStructureWithoutTransition::replacePropertyDescriptor(size_t idx, const ObjectStructurePropertyDescriptor& newDesc)
 {
     m_properties->at(idx).m_descriptor = newDesc;
-    auto newStructure = new ObjectStructureWithoutTransition(m_properties, m_hasIndexPropertyName, m_hasNonAtomicPropertyName);
-    m_properties = nullptr;
-    return newStructure;
+
+    if (m_shouldGenerateNewStructureWhenChanging) {
+        auto newStructure = new ObjectStructureWithoutTransition(m_properties, m_shouldGenerateNewStructureWhenChanging, m_hasIndexPropertyName, m_hasNonAtomicPropertyName);
+        m_properties = nullptr;
+        return newStructure;
+    } else {
+        m_version++;
+        if (m_version == 0) { // overflow!
+            auto newStructure = new ObjectStructureWithoutTransition(m_properties, m_shouldGenerateNewStructureWhenChanging, m_hasIndexPropertyName, m_hasNonAtomicPropertyName);
+            m_properties = nullptr;
+            return newStructure;
+        } else {
+            return this;
+        }
+    }
 }
 
-ObjectStructure* ObjectStructureWithoutTransition::convertToNonTransitionStructure()
+ObjectStructure* ObjectStructureWithoutTransition::convertToNonTransitionStructure(bool shouldGenerateNewStructureWhenChanging)
 {
+    if (m_shouldGenerateNewStructureWhenChanging != shouldGenerateNewStructureWhenChanging) {
+        return new ObjectStructureWithoutTransition(m_properties, shouldGenerateNewStructureWhenChanging, m_hasIndexPropertyName, m_hasNonAtomicPropertyName);
+    }
     return this;
 }
 
@@ -227,10 +274,10 @@ ObjectStructure* ObjectStructureWithTransition::addProperty(const ObjectStructur
 
     size_t nextSize = m_properties.size() + 1;
     if (nextSize > ESCARGOT_OBJECT_STRUCTURE_ACCESS_CACHE_BUILD_MIN_SIZE) {
-        newObjectStructure = new ObjectStructureWithMap(nameIsIndexString, m_properties, newItem);
+        newObjectStructure = new ObjectStructureWithMap(true, nameIsIndexString, m_properties, newItem);
     } else if (nextSize > ESCARGOT_OBJECT_STRUCTURE_TRANSITION_MODE_MAX_SIZE) {
         ObjectStructureItemVector* newProperties = new ObjectStructureItemVector(m_properties, newItem);
-        newObjectStructure = new ObjectStructureWithoutTransition(newProperties, nameIsIndexString, hasNonAtomicName);
+        newObjectStructure = new ObjectStructureWithoutTransition(newProperties, true, nameIsIndexString, hasNonAtomicName);
     } else {
         ObjectStructureItemTightVector newProperties(m_properties, newItem);
         newObjectStructure = new ObjectStructureWithTransition(std::move(newProperties), nameIsIndexString, hasNonAtomicName);
@@ -287,20 +334,20 @@ ObjectStructure* ObjectStructureWithTransition::removeProperty(size_t pIndex)
         newIdx++;
     }
 
-    return new ObjectStructureWithoutTransition(newProperties, hasIndexString, hasNonAtomicName);
+    return new ObjectStructureWithoutTransition(newProperties, true, hasIndexString, hasNonAtomicName);
 }
 
 ObjectStructure* ObjectStructureWithTransition::replacePropertyDescriptor(size_t idx, const ObjectStructurePropertyDescriptor& newDesc)
 {
     ObjectStructureItemVector* newProperties = new ObjectStructureItemVector(m_properties);
     newProperties->at(idx).m_descriptor = newDesc;
-    return new ObjectStructureWithoutTransition(newProperties, m_hasIndexPropertyName, m_hasNonAtomicPropertyName);
+    return new ObjectStructureWithoutTransition(newProperties, true, m_hasIndexPropertyName, m_hasNonAtomicPropertyName);
 }
 
-ObjectStructure* ObjectStructureWithTransition::convertToNonTransitionStructure()
+ObjectStructure* ObjectStructureWithTransition::convertToNonTransitionStructure(bool shouldGenerateNewStructureWhenChanging)
 {
     ObjectStructureItemVector* newProperties = new ObjectStructureItemVector(m_properties);
-    return new ObjectStructureWithoutTransition(newProperties, m_hasIndexPropertyName, m_hasNonAtomicPropertyName);
+    return new ObjectStructureWithoutTransition(newProperties, shouldGenerateNewStructureWhenChanging, m_hasIndexPropertyName, m_hasNonAtomicPropertyName);
 }
 
 void* ObjectStructureWithMap::operator new(size_t size)
@@ -349,10 +396,22 @@ ObjectStructure* ObjectStructureWithMap::addProperty(const ObjectStructureProper
 
     m_propertyNameMap->insert(std::make_pair(name, m_properties->size()));
     m_properties->push_back(newItem);
-    ObjectStructure* newStructure = new ObjectStructureWithMap(m_properties, m_propertyNameMap, nameIsIndexString);
-    m_properties = nullptr;
-    m_propertyNameMap = nullptr;
-    return newStructure;
+    if (m_shouldGenerateNewStructureWhenChanging) {
+        ObjectStructure* newStructure = new ObjectStructureWithMap(m_properties, m_propertyNameMap, m_shouldGenerateNewStructureWhenChanging, nameIsIndexString);
+        m_properties = nullptr;
+        m_propertyNameMap = nullptr;
+        return newStructure;
+    } else {
+        m_version++;
+        if (m_version == 0) { // overflow!
+            ObjectStructure* newStructure = new ObjectStructureWithMap(m_properties, m_propertyNameMap, m_shouldGenerateNewStructureWhenChanging, nameIsIndexString);
+            m_properties = nullptr;
+            m_propertyNameMap = nullptr;
+            return newStructure;
+        } else {
+            return this;
+        }
+    }
 }
 
 ObjectStructure* ObjectStructureWithMap::removeProperty(size_t pIndex)
@@ -372,23 +431,53 @@ ObjectStructure* ObjectStructureWithMap::removeProperty(size_t pIndex)
         newIdx++;
     }
 
-    ObjectStructure* newStructure = new ObjectStructureWithMap(newProperties, ObjectStructureWithMap::createPropertyNameMap(newProperties), hasIndexString);
-    m_properties = nullptr;
-    m_propertyNameMap = nullptr;
-    return newStructure;
+    if (m_shouldGenerateNewStructureWhenChanging) {
+        ObjectStructure* newStructure = new ObjectStructureWithMap(newProperties, ObjectStructureWithMap::createPropertyNameMap(newProperties), m_shouldGenerateNewStructureWhenChanging, hasIndexString);
+        m_properties = nullptr;
+        m_propertyNameMap = nullptr;
+        return newStructure;
+    } else {
+        m_version++;
+        if (m_version == 0) { // overflow!
+            ObjectStructure* newStructure = new ObjectStructureWithMap(m_properties, m_propertyNameMap, m_shouldGenerateNewStructureWhenChanging, hasIndexString);
+            m_properties = nullptr;
+            m_propertyNameMap = nullptr;
+            return newStructure;
+        } else {
+            m_properties = newProperties;
+            m_propertyNameMap = ObjectStructureWithMap::createPropertyNameMap(newProperties);
+            m_hasIndexPropertyName = hasIndexString;
+            return this;
+        }
+    }
 }
 
 ObjectStructure* ObjectStructureWithMap::replacePropertyDescriptor(size_t idx, const ObjectStructurePropertyDescriptor& newDesc)
 {
     m_properties->at(idx).m_descriptor = newDesc;
-    ObjectStructure* newStructure = new ObjectStructureWithMap(m_properties, m_propertyNameMap, m_hasIndexPropertyName);
-    m_properties = nullptr;
-    m_propertyNameMap = nullptr;
-    return newStructure;
+    if (m_shouldGenerateNewStructureWhenChanging) {
+        ObjectStructure* newStructure = new ObjectStructureWithMap(m_properties, m_propertyNameMap, m_shouldGenerateNewStructureWhenChanging, m_hasIndexPropertyName);
+        m_properties = nullptr;
+        m_propertyNameMap = nullptr;
+        return newStructure;
+    } else {
+        m_version++;
+        if (m_version == 0) { // overflow!
+            ObjectStructure* newStructure = new ObjectStructureWithMap(m_properties, m_propertyNameMap, m_shouldGenerateNewStructureWhenChanging, m_hasIndexPropertyName);
+            m_properties = nullptr;
+            m_propertyNameMap = nullptr;
+            return newStructure;
+        } else {
+            return this;
+        }
+    }
 }
 
-ObjectStructure* ObjectStructureWithMap::convertToNonTransitionStructure()
+ObjectStructure* ObjectStructureWithMap::convertToNonTransitionStructure(bool shouldGenerateNewStructureWhenChanging)
 {
+    if (m_shouldGenerateNewStructureWhenChanging != shouldGenerateNewStructureWhenChanging) {
+        return new ObjectStructureWithMap(m_properties, m_propertyNameMap, m_shouldGenerateNewStructureWhenChanging, m_hasIndexPropertyName);
+    }
     return this;
 }
 } // namespace Escargot
