@@ -1037,6 +1037,9 @@ public:
         , m_loadRegisterIndex(loadRegisterIndex)
         , m_propertyName(propertyName)
         , m_presentAttribute(presentAttribute)
+        , m_missCount(0)
+        , m_inlineCachedStructureBefore(nullptr)
+        , m_inlineCachedStructureAfter(nullptr)
     {
     }
 
@@ -1044,6 +1047,9 @@ public:
     ByteCodeRegisterIndex m_loadRegisterIndex : REGISTER_INDEX_IN_BIT;
     AtomicString m_propertyName;
     ObjectPropertyDescriptor::PresentAttribute m_presentAttribute : 8;
+    size_t m_missCount : 4;
+    ObjectStructure* m_inlineCachedStructureBefore;
+    ObjectStructure* m_inlineCachedStructureAfter;
 #ifndef NDEBUG
 
     void dump()
@@ -1053,7 +1059,7 @@ public:
 #endif
 };
 
-BYTECODE_SIZE_CHECK_IN_32BIT(ObjectDefineOwnPropertyWithNameOperation, sizeof(size_t) * 4);
+// BYTECODE_SIZE_CHECK_IN_32BIT(ObjectDefineOwnPropertyWithNameOperation, sizeof(size_t) * 4);
 
 #define ARRAY_DEFINE_OPERATION_MERGE_COUNT 8
 

@@ -919,7 +919,7 @@ Value ByteCodeInterpreter::interpret(ExecutionState* state, ByteCodeBlock* byteC
             :
         {
             ObjectDefineOwnPropertyWithNameOperation* code = (ObjectDefineOwnPropertyWithNameOperation*)programCounter;
-            objectDefineOwnPropertyWithNameOperation(*state, code, registerFile);
+            objectDefineOwnPropertyWithNameOperation(*state, code, byteCodeBlock, registerFile);
             ADD_PROGRAM_COUNTER(ObjectDefineOwnPropertyWithNameOperation);
             NEXT_INSTRUCTION();
         }
@@ -3677,17 +3677,43 @@ NEVER_INLINE void ByteCodeInterpreter::objectDefineOwnPropertyOperation(Executio
     willBeObject.asObject()->defineOwnProperty(state, ObjectPropertyName(state, propertyStringOrSymbol), ObjectPropertyDescriptor(value, code->m_presentAttribute));
 }
 
-NEVER_INLINE void ByteCodeInterpreter::objectDefineOwnPropertyWithNameOperation(ExecutionState& state, ObjectDefineOwnPropertyWithNameOperation* code, Value* registerFile)
+NEVER_INLINE void ByteCodeInterpreter::objectDefineOwnPropertyWithNameOperation(ExecutionState& state, ObjectDefineOwnPropertyWithNameOperation* code, ByteCodeBlock* byteCodeBlock, Value* registerFile)
 {
-    const Value& willBeObject = registerFile[code->m_objectRegisterIndex];
+    Object* object = registerFile[code->m_objectRegisterIndex].asObject();
+    const Value& v = registerFile[code->m_loadRegisterIndex];
     // http://www.ecma-international.org/ecma-262/6.0/#sec-__proto__-property-names-in-object-initializers
-    if (!willBeObject.asObject()->isScriptClassConstructorPrototypeObject() && (code->m_propertyName == state.context()->staticStrings().__proto__)) {
-        const Value& v = registerFile[code->m_loadRegisterIndex];
+    if (!object->isScriptClassConstructorPrototypeObject() && (code->m_propertyName == state.context()->staticStrings().__proto__)) {
         if (v.isObject() || v.isNull()) {
-            willBeObject.asObject()->setPrototype(state, v);
+            object->setPrototype(state, v);
         }
     } else {
-        willBeObject.asObject()->defineOwnProperty(state, ObjectPropertyName(code->m_propertyName), ObjectPropertyDescriptor(registerFile[code->m_loadRegisterIndex], code->m_presentAttribute));
+        const size_t minCacheFillCount = 3;
+        if (object->structure() == code->m_inlineCachedStructureBefore) {
+            object->m_values.push_back(v, code->m_inlineCachedStructureAfter->propertyCount());
+            object->m_structure = code->m_inlineCachedStructureAfter;
+        } else if (code->m_missCount > minCacheFillCount) {
+            // cache miss
+            object->defineOwnProperty(state, ObjectPropertyName(code->m_propertyName), ObjectPropertyDescriptor(v, code->m_presentAttribute));
+        } else {
+            code->m_missCount++;
+            // should we fill cache?
+            if (minCacheFillCount == code->m_missCount) {
+                // try to fill cache
+                auto oldStructure = object->structure();
+                object->defineOwnProperty(state, ObjectPropertyName(code->m_propertyName), ObjectPropertyDescriptor(v, code->m_presentAttribute));
+                auto newStructure = object->structure();
+                if (object->isInlineCacheable() && oldStructure != newStructure) {
+                    byteCodeBlock->m_otherLiteralData.push_back(oldStructure);
+                    byteCodeBlock->m_otherLiteralData.push_back(newStructure);
+                    code->m_inlineCachedStructureBefore = oldStructure;
+                    code->m_inlineCachedStructureAfter = newStructure;
+                } else {
+                    // failed to cache
+                }
+            } else {
+                object->defineOwnProperty(state, ObjectPropertyName(code->m_propertyName), ObjectPropertyDescriptor(v, code->m_presentAttribute));
+            }
+        }
     }
 }
 
