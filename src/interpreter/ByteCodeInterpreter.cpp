@@ -221,6 +221,13 @@ Value Interpreter::interpret(ExecutionState* state, ByteCodeBlock* byteCodeBlock
     NextInstruction:
         /* Execute first instruction. */
         goto*(((ByteCode*)programCounter)->m_opcodeInAddress);
+#elif defined(ESCARGOT_COMPUTED_GOTO_INTERPRETER_PORTABLE)
+#define DEFINE_OPCODE(codeName) codeName##OpcodeLbl
+#define DEFINE_DEFAULT
+#define DECLARE_BYTECODE_NEXT_INSTRUCTION(codeName) case codeName##Opcode: goto codeName##OpcodeLbl;
+#define NEXT_INSTRUCTION() switch(((ByteCode*)programCounter)->m_opcode) { FOR_EACH_BYTECODE(DECLARE_BYTECODE_NEXT_INSTRUCTION); default: UNREACHABLE(); }
+#define JUMP_INSTRUCTION(opcode) goto opcode##OpcodeLbl;
+        NEXT_INSTRUCTION();
 #else
 
 #define DEFINE_OPCODE(codeName) case codeName##Opcode

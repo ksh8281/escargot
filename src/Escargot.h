@@ -181,6 +181,16 @@
 #endif
 #endif
 
+#ifndef UNREACHABLE
+#if defined(COMPILER_GCC) || defined(COMPILER_CLANG)
+#define UNREACHABLE() __builtin_unreachable()
+#elif defined(COMPILER_MSVC)
+#define UNREACHABLE() __assume(0)
+#else
+#define UNREACHABLE()
+#endif
+#endif
+
 // #define OS(NAME) (defined OS_##NAME && OS_##NAME)
 
 #ifdef _WIN32
@@ -484,6 +494,8 @@ void customEscargotErrorLogger(const char* format, ...);
 #if (defined(CPU_ARM64) || (defined(CPU_ARM32) && defined(COMPILER_CLANG))) || defined(OS_DARWIN) || defined(OS_ANDROID)
 #define ESCARGOT_COMPUTED_GOTO_INTERPRETER_INIT_WITH_NULL
 #endif
+#elif defined(COMPILER_MSVC)
+#define ESCARGOT_COMPUTED_GOTO_INTERPRETER_PORTABLE
 #endif
 
 #define MAKE_STACK_ALLOCATED()                    \
