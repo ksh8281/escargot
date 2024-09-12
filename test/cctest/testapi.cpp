@@ -669,6 +669,11 @@ TEST(FunctionObject, Consturct)
                        fn);
 }
 
+TEST(FunctionObject, CallConsturctor)
+{
+    auto testObj = eval(g_context.get(), StringRef::createFromASCII("class foobar{};  foobar;"))->asObject();
+}
+
 TEST(ObjectTemplate, Basic1)
 {
     ObjectTemplateRef* tpl = ObjectTemplateRef::create();

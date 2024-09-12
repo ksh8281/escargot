@@ -4159,7 +4159,13 @@ NEVER_INLINE void InterpreterSlowPath::callFunctionComplexCase(ExecutionState& s
         }
 
         // Let result be Construct(func, argList, newTarget).
-        Value result = Object::construct(state, registerFile[code->m_calleeIndex], argc, argv, newTarget);
+        Value result;
+        Value* stackStorage = registerFile + byteCodeBlock->m_requiredOperandRegisterNumber;
+        if (stackStorage[0].asPointerValue()) {
+            result = stackStorage[0].asObject();
+        } else {
+            result = Object::construct(state, registerFile[code->m_calleeIndex], argc, argv, newTarget);
+        }
 
         // Let thisER be GetThisEnvironment( ).
         // Return thisER.BindThisValue(result).
