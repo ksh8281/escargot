@@ -1089,6 +1089,9 @@ Value Interpreter::interpret(ExecutionState* state, ByteCodeBlock* byteCodeBlock
             :
         {
             UnaryTypeof* code = (UnaryTypeof*)programCounter;
+            const size_t registerFileSize = byteCodeBlock->m_requiredTotalRegisterNumber;
+            const size_t generalRegisterSize = byteCodeBlock->m_requiredOperandRegisterNumber;
+            printf("codeblock %p bytecode block reg info %zu %zu %p\n", byteCodeBlock->m_codeBlock, registerFileSize, generalRegisterSize, code);
             InterpreterSlowPath::unaryTypeof(*state, code, registerFile);
             ADD_PROGRAM_COUNTER(UnaryTypeof);
             NEXT_INSTRUCTION();
@@ -4732,6 +4735,11 @@ NEVER_INLINE Value InterpreterSlowPath::decrementOperationSlowCase(ExecutionStat
 
 NEVER_INLINE void InterpreterSlowPath::unaryTypeof(ExecutionState& state, UnaryTypeof* code, Value* registerFile)
 {
+#ifndef NDEBUG
+    printf("%s", code->m_id.string()->toUTF8StringData().data());
+    code->dump();
+    puts("");
+#endif
     Value val;
     if (code->m_id.string()->length()) {
         val = loadByName(state, state.lexicalEnvironment(), code->m_id, false);
@@ -4757,6 +4765,7 @@ NEVER_INLINE void InterpreterSlowPath::unaryTypeof(ExecutionState& state, UnaryT
             val = state.context()->staticStrings().bigint.string();
         } else {
             ASSERT(p->isObject());
+            printf("p %p, typetag %zu\n", p, p->getTypeTag());
             if (!p->isCallable()) {
                 val = state.context()->staticStrings().object.string();
 #if defined(ESCARGOT_ENABLE_TEST)
