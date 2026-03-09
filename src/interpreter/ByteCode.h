@@ -1005,7 +1005,7 @@ public:
         , m_stage(Stage::Init)
         , m_allPrecomputed(false)
         , m_needsToUsePropertyFilterOnIntepreter(needsToUseNameFilterOnIntepreter)
-        , m_needsToUsePropertyMapOnIntepreter(false)
+        , m_needsToUsePropertyMapOnIntepreter(needsToUsePropertyMapOnIntepreter)
         , m_hasPrecomputedKey(false)
         , m_needsToUpdateFunctionName(false)
         , m_isGetter(false)

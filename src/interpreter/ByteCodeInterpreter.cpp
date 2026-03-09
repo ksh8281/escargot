@@ -3121,11 +3121,11 @@ NEVER_INLINE void InterpreterSlowPath::createObjectPrepareOperation(ExecutionSta
                 }
                 data->m_filter = new (reinterpret_cast<void*>(ptr + diff)) CreateObjectPrepare::CreateObjectPropertyFilter;
             }
-        } else if (UNLIKELY(data->m_needsToUsePropertyFilterOnIntepreter)) {
+        } else if (UNLIKELY(data->m_needsToUsePropertyMapOnIntepreter)) {
             if (byteCodeBlock->codeBlock()->isAsyncOrGenerator()) {
                 data->m_map = new (GC) PropertyNameMap();
             } else {
-                size_t diff = sizeof(PropertyNameMap);
+                size_t diff = sizeof(CreateObjectPrepare::CreateObjectData);
                 if (diff % sizeof(Value)) {
                     diff += (sizeof(Value) - (diff % sizeof(Value)));
                 }
@@ -3175,8 +3175,7 @@ NEVER_INLINE void InterpreterSlowPath::createObjectPrepareOperation(ExecutionSta
         bool updateProperty = false;
 
         if (UNLIKELY(data->m_needsToUsePropertyFilterOnIntepreter)) {
-            auto newPropertyNameHash = (propertyName.isSymbol() ?
-                propertyName.symbol()->descriptionString()->hashValue() : propertyName.plainString()->hashValue());
+            auto newPropertyNameHash = (propertyName.isSymbol() ? propertyName.symbol()->descriptionString()->hashValue() : propertyName.plainString()->hashValue());
             if (!data->m_filter->mayContain(newPropertyNameHash)) {
                 data->m_filter->add(newPropertyNameHash);
                 needsPropertySearch = false;
