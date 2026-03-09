@@ -60,7 +60,8 @@ public:
         size_t objectCreationDataRegisterSize = 0;
         size_t initCodePosition = codeBlock->currentCodeSize();
 
-        bool needsToUseNameFilterOnIntepreter = m_properties.size() >= 6;
+        bool needsToUsePropertyMapOnIntepreter = m_properties.size() >= 64;
+        bool needsToUseNameFilterOnIntepreter = !needsToUsePropertyMapOnIntepreter && m_properties.size() >= 6;
         if (needsToUseNameFilterOnIntepreter) {
             for (SentinelNode* property = m_properties.begin(); property != m_properties.end(); property = property->next()) {
                 if (!property->astNode()->isProperty()) {
@@ -84,10 +85,15 @@ public:
                         objectCreationDataRegisterSize++;
                         context->getRegister();
                     }
+                } else if (needsToUsePropertyMapOnIntepreter) {
+                    for (size_t i = 0; i < sizeof(PropertyNameMap); i += sizeof(Value)) {
+                        objectCreationDataRegisterSize++;
+                        context->getRegister();
+                    }
                 }
             }
 
-            codeBlock->pushCode(CreateObjectPrepare(ByteCodeLOC(m_loc.index), objectCreationDataIndex, dstRegister, needsToUseNameFilterOnIntepreter), context, this->m_loc.index);
+            codeBlock->pushCode(CreateObjectPrepare(ByteCodeLOC(m_loc.index), objectCreationDataIndex, dstRegister, needsToUseNameFilterOnIntepreter, needsToUsePropertyMapOnIntepreter), context, this->m_loc.index);
         }
 
         bool allPrecomputed = true;

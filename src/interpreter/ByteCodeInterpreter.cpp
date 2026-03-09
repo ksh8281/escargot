@@ -3105,7 +3105,7 @@ NEVER_INLINE void InterpreterSlowPath::createObjectPrepareOperation(ExecutionSta
         }
         CreateObjectPrepare::CreateObjectData* data = new (ptr) CreateObjectPrepare::CreateObjectData(
             code->m_allPrecomputed, code->m_cachedObjectStructure.hasValue(), code->m_allPrecomputed,
-            code->m_needsToUsePropertyFilterOnIntepreter,
+            code->m_needsToUsePropertyFilterOnIntepreter, code->m_needsToUsePropertyMapOnIntepreter,
             code->m_propertyReserveSize, new Object(state), code);
         registerFile[code->m_objectIndex] = data->m_target;
         if (data->m_wasStructureComputed) {
@@ -3119,9 +3119,19 @@ NEVER_INLINE void InterpreterSlowPath::createObjectPrepareOperation(ExecutionSta
                 if (diff % sizeof(Value)) {
                     diff += (sizeof(Value) - (diff % sizeof(Value)));
                 }
-                data->m_filter = reinterpret_cast<CreateObjectPrepare::CreateObjectPropertyFilter*>(ptr + diff);
+                data->m_filter = new (reinterpret_cast<void*>(ptr + diff)) CreateObjectPrepare::CreateObjectPropertyFilter;
             }
-            data->m_filter->clear();
+        } else if (UNLIKELY(data->m_needsToUsePropertyFilterOnIntepreter)) {
+            if (byteCodeBlock->codeBlock()->isAsyncOrGenerator()) {
+                data->m_map = new (GC) PropertyNameMap();
+            } else {
+                size_t diff = sizeof(PropertyNameMap);
+                if (diff % sizeof(Value)) {
+                    diff += (sizeof(Value) - (diff % sizeof(Value)));
+                }
+                data->m_map = new (reinterpret_cast<void*>(ptr + diff)) PropertyNameMap;
+            }
+            data->m_map->reserve(code->m_propertyReserveSize);
         }
     } else {
         ASSERT(code->m_stage == CreateObjectPrepare::FillKeyValue || code->m_stage == CreateObjectPrepare::DefineGetterSetter);
@@ -3160,19 +3170,28 @@ NEVER_INLINE void InterpreterSlowPath::createObjectPrepareOperation(ExecutionSta
         }
 
         bool needsPropertySearch = true;
-        if (UNLIKELY(data->m_needsToUsePropertyFilterOnIntepreter)) {
-            auto newPropertyNameHash = (propertyName.isSymbol() ?
-                propertyName.symbol()->descriptionString()->hashValue() : propertyName.plainString()->hashValue());
-            if (data->m_filter->mayContain(newPropertyNameHash)) {
-            } else {
-                data->m_filter->add(newPropertyNameHash);
-                needsPropertySearch = false;
-            }
-        }
-
         size_t lastPropertyCount = data->m_properties.size();
         size_t targetIndex = lastPropertyCount;
         bool updateProperty = false;
+
+        if (UNLIKELY(data->m_needsToUsePropertyFilterOnIntepreter)) {
+            auto newPropertyNameHash = (propertyName.isSymbol() ?
+                propertyName.symbol()->descriptionString()->hashValue() : propertyName.plainString()->hashValue());
+            if (!data->m_filter->mayContain(newPropertyNameHash)) {
+                data->m_filter->add(newPropertyNameHash);
+                needsPropertySearch = false;
+            }
+        } else if (UNLIKELY(data->m_needsToUsePropertyMapOnIntepreter)) {
+            needsPropertySearch = false;
+            auto iter = data->m_map->find(propertyName);
+            if (iter == data->m_map->end()) {
+                data->m_map->insert(std::make_pair(propertyName, lastPropertyCount));
+            } else {
+                updateProperty = true;
+                data->m_canStoreStructureOnCode = false;
+                targetIndex = iter->second;
+            }
+        }
 
         if (LIKELY(needsPropertySearch)) {
             for (size_t i = 0; i < lastPropertyCount; i++) {
