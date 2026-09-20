@@ -1251,7 +1251,7 @@ int main(int argc, char* argv[])
     ShellPlatform* platform = new ShellPlatform();
     Globals::initialize(platform);
 
-    Memory::setGCFrequency(12);
+    Memory::setGCFrequency(8);
 
     PersistentRefHolder<VMInstanceRef> instance = VMInstanceRef::create();
     instance->registerPromiseRejectCallback([](ExecutionStateRef* state, PromiseObjectRef* promise, ValueRef* value, VMInstanceRef::PromiseRejectEvent event) {
