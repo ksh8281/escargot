@@ -30,6 +30,8 @@ namespace Escargot {
 
 class ObjectStructure;
 
+using ObjectStructureFindResult = std::pair<size_t, Optional<const ObjectStructurePropertyDescriptor*>>;
+
 #if defined(ESCARGOT_OBJECT_STRUCTURE_PROFILE)
 enum class ObjectStructureProfileKind : uint8_t {
     WithoutTransition,
@@ -108,6 +110,34 @@ public:
     void* operator new[](size_t size) = delete;
 };
 
+class ObjectStructureIndexPropertyVector : public Vector<uint32_t, GCUtil::gc_malloc_atomic_allocator<uint32_t>> {
+    using Base = Vector<uint32_t, GCUtil::gc_malloc_atomic_allocator<uint32_t>>;
+
+public:
+    ObjectStructureIndexPropertyVector() = default;
+    ObjectStructureIndexPropertyVector(const ObjectStructureIndexPropertyVector& other)
+        : Base(other)
+    {
+    }
+
+    void* operator new(size_t size);
+    void* operator new[](size_t size) = delete;
+};
+
+class ObjectStructureIndexDescriptorVector : public Vector<ObjectStructurePropertyDescriptor, GCUtil::gc_malloc_allocator<ObjectStructurePropertyDescriptor>> {
+    using Base = Vector<ObjectStructurePropertyDescriptor, GCUtil::gc_malloc_allocator<ObjectStructurePropertyDescriptor>>;
+
+public:
+    ObjectStructureIndexDescriptorVector() = default;
+    ObjectStructureIndexDescriptorVector(const ObjectStructureIndexDescriptorVector& other)
+        : Base(other)
+    {
+    }
+
+    void* operator new(size_t size);
+    void* operator new[](size_t size) = delete;
+};
+
 #if defined(ESCARGOT_SMALL_CONFIG)
 #ifndef ESCARGOT_OBJECT_STRUCTURE_ACCESS_CACHE_BUILD_MIN_SIZE
 #define ESCARGOT_OBJECT_STRUCTURE_ACCESS_CACHE_BUILD_MIN_SIZE 2048
@@ -142,25 +172,82 @@ public:
     }
     static ObjectStructure* create(Context* ctx, ObjectStructureItemTightVector&& properties, bool preferTransition = false);
 
-    std::pair<size_t, Optional<const ObjectStructureItem*>> findProperty(ExecutionState& state, String* propertyName)
+    ObjectStructureFindResult findProperty(ExecutionState& state, String* propertyName)
     {
+        if (UNLIKELY(m_hasIndexPropertyName)) {
+            uint32_t index = propertyName->tryToUseAsIndexProperty();
+            if (index != Value::InvalidIndexPropertyValue) {
+                return findIndexProperty(index);
+            }
+        }
         ObjectStructurePropertyName name(state, propertyName);
-        return findProperty(name);
+        return findNonIndexProperty(name);
     }
 
     ObjectStructure* addProperty(ExecutionState& state, String* propertyName, const ObjectStructurePropertyDescriptor& desc)
     {
+        uint32_t index = propertyName->tryToUseAsIndexProperty();
+        if (index != Value::InvalidIndexPropertyValue) {
+            return addIndexProperty(index, desc);
+        }
         ObjectStructurePropertyName name(state, propertyName);
-        return addProperty(name, desc);
+        return addNonIndexProperty(name, desc);
     }
 
-    virtual std::pair<size_t, Optional<const ObjectStructureItem*>> findProperty(const ObjectStructurePropertyName& s) = 0;
-    virtual const ObjectStructureItem& readProperty(size_t idx) = 0;
-    virtual const ObjectStructureItem* properties() const = 0;
+    virtual ObjectStructureFindResult findProperty(const ObjectStructurePropertyName& s) = 0;
+    virtual ObjectStructureFindResult findNonIndexProperty(const ObjectStructurePropertyName& s)
+    {
+        return findProperty(s);
+    }
+    virtual ObjectStructureFindResult findIndexProperty(uint32_t index) = 0;
+    virtual const ObjectStructurePropertyDescriptor& propertyDescriptor(size_t valueIndex) const = 0;
+    virtual bool isIndexProperty(size_t valueIndex) const = 0;
+    virtual uint32_t indexPropertyName(size_t valueIndex) const = 0;
+    virtual const ObjectStructurePropertyName& nonIndexPropertyName(size_t valueIndex) const = 0;
+    virtual const ObjectStructureItem* nonIndexPropertiesData() const
+    {
+        return nullptr;
+    }
     virtual size_t propertyCount() const = 0;
+    virtual size_t namedPropertyCount() const = 0;
+    virtual size_t indexPropertyCount() const
+    {
+        return propertyCount() - namedPropertyCount();
+    }
+    virtual void fillIndexPropertyOrdinalsInOrder(uint32_t* ordinals) const
+    {
+        ASSERT(indexPropertyCount() < UINT32_MAX);
+        for (size_t i = 0; i < indexPropertyCount(); i++) {
+            ordinals[i] = static_cast<uint32_t>(i);
+        }
+    }
+
+    ObjectStructurePropertyName propertyName(ExecutionState& state, size_t valueIndex) const
+    {
+        if (isIndexProperty(valueIndex)) {
+            return ObjectStructurePropertyName(state, String::fromUint32(indexPropertyName(valueIndex), state));
+        }
+        return nonIndexPropertyName(valueIndex);
+    }
     virtual ObjectStructure* addProperty(const ObjectStructurePropertyName& name, const ObjectStructurePropertyDescriptor& desc) = 0;
+    virtual ObjectStructure* addNonIndexProperty(const ObjectStructurePropertyName& name, const ObjectStructurePropertyDescriptor& desc)
+    {
+        return addProperty(name, desc);
+    }
+    virtual ObjectStructure* addIndexProperty(uint32_t index, const ObjectStructurePropertyDescriptor& desc) = 0;
     virtual ObjectStructure* removeProperty(size_t pIndex) = 0;
     virtual ObjectStructure* replacePropertyDescriptor(size_t idx, const ObjectStructurePropertyDescriptor& newDesc) = 0;
+
+    virtual bool hasPartitionedNonIndexProperties() const
+    {
+        return false;
+    }
+
+    virtual size_t stringPropertyCount() const
+    {
+        ASSERT_NOT_REACHED();
+        return 0;
+    }
 
     virtual ObjectStructure* convertToNonTransitionStructure()
     {
@@ -202,10 +289,14 @@ public:
         size_t myCount = propertyCount();
         size_t srcCount = src->propertyCount();
         if (myCount == srcCount) {
-            auto myProperties = properties();
-            auto srcProperties = src->properties();
             for (size_t j = 0; j < myCount; j++) {
-                if (myProperties[j].m_propertyName != srcProperties[j].m_propertyName || myProperties[j].m_descriptor != srcProperties[j].m_descriptor) {
+                bool myIndex = isIndexProperty(j);
+                bool srcIndex = src->isIndexProperty(j);
+                if (myIndex != srcIndex || propertyDescriptor(j) != src->propertyDescriptor(j)) {
+                    return false;
+                }
+                if (myIndex ? indexPropertyName(j) != src->indexPropertyName(j)
+                            : nonIndexPropertyName(j) != src->nonIndexPropertyName(j)) {
                     return false;
                 }
             }
@@ -266,9 +357,8 @@ struct ObjectStructureHash {
         size_t propertyCount = x->propertyCount();
         size_t result = propertyCount;
         size_t hashPropertyCount = std::min(propertyCount, static_cast<size_t>(6));
-        auto properties = x->properties();
         for (size_t i = 0; i < hashPropertyCount; i++) {
-            result += properties[i].m_propertyName.hashValue();
+            result += x->isIndexProperty(i) ? x->indexPropertyName(i) : x->nonIndexPropertyName(i).hashValue();
         }
         return result;
     }
@@ -293,11 +383,17 @@ public:
 #endif
     }
 
-    virtual std::pair<size_t, Optional<const ObjectStructureItem*>> findProperty(const ObjectStructurePropertyName& s) override;
-    virtual const ObjectStructureItem& readProperty(size_t idx) override;
-    virtual const ObjectStructureItem* properties() const override;
+    virtual ObjectStructureFindResult findProperty(const ObjectStructurePropertyName& s) override;
+    virtual ObjectStructureFindResult findIndexProperty(uint32_t index) override;
+    virtual const ObjectStructurePropertyDescriptor& propertyDescriptor(size_t valueIndex) const override;
+    virtual bool isIndexProperty(size_t valueIndex) const override;
+    virtual uint32_t indexPropertyName(size_t valueIndex) const override;
+    virtual const ObjectStructurePropertyName& nonIndexPropertyName(size_t valueIndex) const override;
+    virtual const ObjectStructureItem* nonIndexPropertiesData() const override;
     virtual size_t propertyCount() const override;
+    virtual size_t namedPropertyCount() const override;
     virtual ObjectStructure* addProperty(const ObjectStructurePropertyName& name, const ObjectStructurePropertyDescriptor& desc) override;
+    virtual ObjectStructure* addIndexProperty(uint32_t index, const ObjectStructurePropertyDescriptor& desc) override;
     virtual ObjectStructure* removeProperty(size_t pIndex) override;
     virtual ObjectStructure* replacePropertyDescriptor(size_t idx, const ObjectStructurePropertyDescriptor& newDesc) override;
 
@@ -340,11 +436,17 @@ public:
 #endif
     }
 
-    virtual std::pair<size_t, Optional<const ObjectStructureItem*>> findProperty(const ObjectStructurePropertyName& s) override;
-    virtual const ObjectStructureItem& readProperty(size_t idx) override;
-    virtual const ObjectStructureItem* properties() const override;
+    virtual ObjectStructureFindResult findProperty(const ObjectStructurePropertyName& s) override;
+    virtual ObjectStructureFindResult findIndexProperty(uint32_t index) override;
+    virtual const ObjectStructurePropertyDescriptor& propertyDescriptor(size_t valueIndex) const override;
+    virtual bool isIndexProperty(size_t valueIndex) const override;
+    virtual uint32_t indexPropertyName(size_t valueIndex) const override;
+    virtual const ObjectStructurePropertyName& nonIndexPropertyName(size_t valueIndex) const override;
+    virtual const ObjectStructureItem* nonIndexPropertiesData() const override;
     virtual size_t propertyCount() const override;
+    virtual size_t namedPropertyCount() const override;
     virtual ObjectStructure* addProperty(const ObjectStructurePropertyName& name, const ObjectStructurePropertyDescriptor& desc) override;
+    virtual ObjectStructure* addIndexProperty(uint32_t index, const ObjectStructurePropertyDescriptor& desc) override;
     virtual ObjectStructure* removeProperty(size_t pIndex) override;
     virtual ObjectStructure* replacePropertyDescriptor(size_t idx, const ObjectStructurePropertyDescriptor& newDesc) override;
     virtual ObjectStructure* convertToNonTransitionStructure() override;
@@ -467,11 +569,17 @@ public:
 #endif
     }
 
-    virtual std::pair<size_t, Optional<const ObjectStructureItem*>> findProperty(const ObjectStructurePropertyName& s) override;
-    virtual const ObjectStructureItem& readProperty(size_t idx) override;
-    virtual const ObjectStructureItem* properties() const override;
+    virtual ObjectStructureFindResult findProperty(const ObjectStructurePropertyName& s) override;
+    virtual ObjectStructureFindResult findIndexProperty(uint32_t index) override;
+    virtual const ObjectStructurePropertyDescriptor& propertyDescriptor(size_t valueIndex) const override;
+    virtual bool isIndexProperty(size_t valueIndex) const override;
+    virtual uint32_t indexPropertyName(size_t valueIndex) const override;
+    virtual const ObjectStructurePropertyName& nonIndexPropertyName(size_t valueIndex) const override;
+    virtual const ObjectStructureItem* nonIndexPropertiesData() const override;
     virtual size_t propertyCount() const override;
+    virtual size_t namedPropertyCount() const override;
     virtual ObjectStructure* addProperty(const ObjectStructurePropertyName& name, const ObjectStructurePropertyDescriptor& desc) override;
+    virtual ObjectStructure* addIndexProperty(uint32_t index, const ObjectStructurePropertyDescriptor& desc) override;
     virtual ObjectStructure* removeProperty(size_t pIndex) override;
     virtual ObjectStructure* replacePropertyDescriptor(size_t idx, const ObjectStructurePropertyDescriptor& newDesc) override;
 
@@ -486,6 +594,178 @@ public:
 private:
     ObjectStructureItemVector* m_properties;
     Optional<PropertyNameMapWithCache*> m_propertyNameMap;
+};
+
+// Property metadata is partitioned into string, symbol, and canonical
+// array-index areas. Values use the same string -> symbol -> index partition
+// in Object::m_values; enumeration visits indexes first without sorting the
+// string/symbol areas.
+class IndexPropertyOrderChunk : public gc {
+public:
+    static constexpr size_t Capacity = 128;
+
+    void* operator new(size_t size);
+    void* operator new[](size_t size) = delete;
+
+    size_t m_size { 0 };
+    uint32_t m_ordinals[Capacity];
+};
+
+class IndexPropertyMapWithCache : public gc {
+public:
+    explicit IndexPropertyMapWithCache(const ObjectStructureIndexPropertyVector& properties);
+
+    size_t find(uint32_t index, const ObjectStructureIndexPropertyVector& properties) const;
+    void insert(const ObjectStructureIndexPropertyVector& properties);
+    void fillOrdinalsInOrder(uint32_t* ordinals) const;
+
+private:
+    void rebuildHash(const ObjectStructureIndexPropertyVector& properties);
+    void insertHashEntry(uint32_t index, size_t ordinal);
+    void rebuildOrder(const ObjectStructureIndexPropertyVector& properties);
+    void insertOrder(const ObjectStructureIndexPropertyVector& properties, uint32_t ordinal);
+
+    Vector<IndexPropertyOrderChunk*, GCUtil::gc_malloc_allocator<IndexPropertyOrderChunk*>> m_orderChunks;
+    uint32_t* m_entries { nullptr };
+    size_t m_capacity { 0 };
+    size_t m_size { 0 };
+};
+
+class ObjectStructureWithIndexProperties : public ObjectStructure {
+public:
+    struct InlineIndexProperties {
+        static constexpr size_t Capacity = 2;
+
+        uint32_t m_keys[Capacity] { 0, 0 };
+        uint8_t m_size { 0 };
+    };
+
+    template <typename SourceProperties>
+    explicit ObjectStructureWithIndexProperties(const SourceProperties& properties)
+        : ObjectStructure(false, false, false, false)
+        , m_namedProperties(new ObjectStructureItemVector())
+        , m_symbolProperties(new ObjectStructureItemVector())
+        , m_indexProperties(nullptr)
+        , m_indexDescriptors(nullptr)
+    {
+        size_t indexPropertyCount = 0;
+        for (size_t i = 0; i < properties.size(); i++) {
+            indexPropertyCount += properties[i].m_propertyName.tryToUseAsIndexProperty() != Value::InvalidIndexPropertyValue;
+        }
+        if (indexPropertyCount > InlineIndexProperties::Capacity) {
+            m_indexProperties = new ObjectStructureIndexPropertyVector();
+            m_indexProperties->reserve(indexPropertyCount);
+        }
+        m_namedProperties->reserve(properties.size());
+        m_symbolProperties->reserve(properties.size());
+        for (size_t i = 0; i < properties.size(); i++) {
+            appendPartitioned(properties[i]);
+        }
+        sortIndexProperties();
+        finishConstruction();
+    }
+
+    template <typename SourceProperties>
+    ObjectStructureWithIndexProperties(const SourceProperties& properties, uint32_t index, const ObjectStructurePropertyDescriptor& desc)
+        : ObjectStructure(true, false, false, false)
+        , m_namedProperties(new ObjectStructureItemVector())
+        , m_symbolProperties(new ObjectStructureItemVector())
+        , m_indexProperties(nullptr)
+        , m_indexDescriptors(nullptr)
+    {
+        size_t indexPropertyCount = 1;
+        for (size_t i = 0; i < properties.size(); i++) {
+            indexPropertyCount += properties[i].m_propertyName.tryToUseAsIndexProperty() != Value::InvalidIndexPropertyValue;
+        }
+        if (indexPropertyCount > InlineIndexProperties::Capacity) {
+            m_indexProperties = new ObjectStructureIndexPropertyVector();
+            m_indexProperties->reserve(indexPropertyCount);
+        }
+        m_namedProperties->reserve(properties.size());
+        m_symbolProperties->reserve(properties.size());
+        for (size_t i = 0; i < properties.size(); i++) {
+            appendPartitioned(properties[i]);
+        }
+        appendIndexProperty(index, desc);
+        sortIndexProperties();
+        finishConstruction();
+    }
+
+    ObjectStructureWithIndexProperties(ObjectStructureItemVector* namedProperties,
+                                       ObjectStructureItemVector* symbolProperties,
+                                       ObjectStructureIndexPropertyVector* indexProperties,
+                                       const InlineIndexProperties& inlineIndexProperties,
+                                       ObjectStructureIndexDescriptorVector* indexDescriptors,
+                                       Optional<PropertyNameMapWithCache*> namedMap,
+                                       Optional<IndexPropertyMapWithCache*> indexMap);
+    ObjectStructureWithIndexProperties(ObjectStructureItemVector* namedProperties,
+                                       ObjectStructureItemVector* symbolProperties,
+                                       ObjectStructureIndexPropertyVector* indexProperties,
+                                       const InlineIndexProperties& inlineIndexProperties,
+                                       ObjectStructureIndexDescriptorVector* indexDescriptors,
+                                       Optional<PropertyNameMapWithCache*> namedMap,
+                                       Optional<IndexPropertyMapWithCache*> indexMap,
+                                       bool hasNonAtomicPropertyName,
+                                       bool hasEnumerableProperty);
+
+    virtual ObjectStructureFindResult findProperty(const ObjectStructurePropertyName& s) override;
+    virtual ObjectStructureFindResult findNonIndexProperty(const ObjectStructurePropertyName& s) override;
+    virtual ObjectStructureFindResult findIndexProperty(uint32_t index) override;
+    virtual const ObjectStructurePropertyDescriptor& propertyDescriptor(size_t valueIndex) const override;
+    virtual bool isIndexProperty(size_t valueIndex) const override;
+    virtual uint32_t indexPropertyName(size_t valueIndex) const override;
+    virtual const ObjectStructurePropertyName& nonIndexPropertyName(size_t valueIndex) const override;
+    virtual size_t propertyCount() const override;
+    virtual size_t namedPropertyCount() const override;
+    virtual void fillIndexPropertyOrdinalsInOrder(uint32_t* ordinals) const override;
+    virtual bool hasPartitionedNonIndexProperties() const override
+    {
+        return true;
+    }
+    virtual size_t stringPropertyCount() const override
+    {
+        return m_namedProperties->size();
+    }
+    virtual ObjectStructure* addProperty(const ObjectStructurePropertyName& name, const ObjectStructurePropertyDescriptor& desc) override;
+    virtual ObjectStructure* addNonIndexProperty(const ObjectStructurePropertyName& name, const ObjectStructurePropertyDescriptor& desc) override;
+    virtual ObjectStructure* addIndexProperty(uint32_t index, const ObjectStructurePropertyDescriptor& desc) override;
+    virtual ObjectStructure* removeProperty(size_t valueIndex) override;
+    virtual ObjectStructure* replacePropertyDescriptor(size_t valueIndex, const ObjectStructurePropertyDescriptor& newDesc) override;
+
+    void* operator new(size_t size);
+    void* operator new[](size_t size) = delete;
+
+private:
+    static const ObjectStructurePropertyDescriptor& defaultIndexPropertyDescriptor();
+    static bool isDefaultIndexPropertyDescriptor(const ObjectStructurePropertyDescriptor& descriptor);
+    size_t indexPropertyStorageSize() const;
+    uint32_t indexPropertyAt(size_t ordinal) const;
+    void appendIndexProperty(uint32_t index, const ObjectStructurePropertyDescriptor& descriptor);
+    void appendPartitioned(const ObjectStructureItem& item)
+    {
+        uint32_t index = item.m_propertyName.tryToUseAsIndexProperty();
+        if (index != Value::InvalidIndexPropertyValue) {
+            appendIndexProperty(index, item.m_descriptor);
+        } else if (item.m_propertyName.isSymbol()) {
+            m_symbolProperties->push_back(item);
+        } else {
+            m_namedProperties->push_back(item);
+        }
+    }
+    void sortIndexProperties();
+    void finishConstruction();
+
+    ObjectStructureItemVector* m_namedProperties;
+    ObjectStructureItemVector* m_symbolProperties;
+    // One- and two-key numeric structures keep their sorted keys in the
+    // structure itself. The external atomic vector starts at the third key.
+    InlineIndexProperties m_inlineIndexProperties;
+    ObjectStructureIndexPropertyVector* m_indexProperties;
+    // Null means every numeric property has the common plain-data W/E/C
+    // descriptor. Materialize the parallel vector only for an exception.
+    ObjectStructureIndexDescriptorVector* m_indexDescriptors;
+    Optional<PropertyNameMapWithCache*> m_namedPropertyMap;
+    Optional<IndexPropertyMapWithCache*> m_indexPropertyMap;
 };
 } // namespace Escargot
 
