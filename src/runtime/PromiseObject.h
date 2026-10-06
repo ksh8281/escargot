@@ -167,9 +167,9 @@ protected:
     }
 
     PromiseState m_state;
-    EncodedValue m_promiseResult;
-    Reactions m_fulfillReactions;
-    Reactions m_rejectReactions;
+    HeapEncodedValue m_promiseResult;
+    CompressibleHeapVectorOwner<Reactions, PromiseReaction> m_fulfillReactions;
+    CompressibleHeapVectorOwner<Reactions, PromiseReaction> m_rejectReactions;
 };
 } // namespace Escargot
 #endif // __EscargotPromiseObject__

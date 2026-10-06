@@ -282,7 +282,7 @@ public:
         bool m_isMutable : 1;
         bool m_isUsing : 1;
         CompactIdentifierIndex m_indexForIndexedStorage;
-        CompactAtomicString m_name;
+        CompressibleAtomicString m_name;
     };
 
     typedef TightVector<BlockIdentifierInfo, GCUtil::gc_malloc_atomic_allocator<BlockIdentifierInfo>> BlockIdentifierInfoVector;
@@ -442,10 +442,10 @@ public:
         bool m_isExplicitlyDeclaredOrParameterName : 1;
         bool m_isVarDeclaration : 1;
         CompactIdentifierIndex m_indexForIndexedStorage;
-        CompactAtomicString m_name;
+        CompressibleAtomicString m_name;
     };
 
-#if defined(ESCARGOT_64) && defined(ESCARGOT_USE_32BIT_IN_64BIT)
+#if defined(ESCARGOT_USE_32BIT_IN_64BIT)
     COMPILE_ASSERT(sizeof(BlockIdentifierInfo) == 12, "");
     COMPILE_ASSERT(sizeof(IdentifierInfo) == 12, "");
 #endif

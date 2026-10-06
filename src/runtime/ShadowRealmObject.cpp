@@ -28,8 +28,27 @@
 #include "runtime/SandBox.h"
 #include "parser/Script.h"
 #include "parser/ScriptParser.h"
+#include "heap/Heap.h"
 
 namespace Escargot {
+
+#if defined(ENABLE_SHADOWREALM)
+void* ShadowRealmObject::operator new(size_t size)
+{
+#if defined(ESCARGOT_USE_32BIT_IN_64BIT)
+    if (UNLIKELY(!Heap::isCompressedTypeInitialized(Heap::CompressedType::ShadowRealmObject))) {
+        GC_word bitmap[(sizeof(ShadowRealmObject) / 4 + GC_WORDSZ - 1) / GC_WORDSZ] = { 0 };
+        Object::fillCompressedGCDescriptor(bitmap);
+        GC_set_bit(bitmap, offsetof(ShadowRealmObject, m_realmContext) / 4);
+        GC_set_bit(bitmap, offsetof(ShadowRealmObject, m_referrer) / 4);
+        Heap::initializeCompressedType(Heap::CompressedType::ShadowRealmObject, size, bitmap, sizeof(ShadowRealmObject) / 4);
+    }
+    return Heap::mallocCompressed(Heap::CompressedType::ShadowRealmObject, size);
+#else
+    return GC_MALLOC(size);
+#endif
+}
+#endif
 
 #if defined(ENABLE_SHADOWREALM)
 

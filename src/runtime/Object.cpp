@@ -35,6 +35,7 @@
 #include "ScriptClassConstructorFunctionObject.h"
 
 #include "Global.h"
+#include "heap/Heap.h"
 
 namespace Escargot {
 
@@ -68,8 +69,7 @@ ObjectStructurePropertyName::ObjectStructurePropertyName(ExecutionState& state, 
     String* string = value.toString(state);
     size_t v = string->getTypeTag();
     if (v > POINTER_VALUE_STRING_TAG_IN_DATA) {
-        ASSERT(v == ((v & ~POINTER_VALUE_STRING_TAG_IN_DATA) | OBJECT_PROPERTY_NAME_ATOMIC_STRING_VIAS));
-        m_data = v;
+        m_data = reinterpret_cast<size_t>(string->canonicalAtomicString()) | OBJECT_PROPERTY_NAME_ATOMIC_STRING_VIAS;
         return;
     }
 
@@ -115,7 +115,7 @@ ObjectRareData::ObjectRareData(Object* obj)
 #endif
     , m_arrayObjectFastModeBufferExpandCount(0)
     , m_extraData(nullptr)
-    , m_prototype(obj ? obj->m_prototype : nullptr)
+    , m_prototype(obj ? obj->m_prototype.value() : nullptr)
     , m_internalSlot(nullptr)
 {
 }
@@ -458,6 +458,31 @@ void ObjectPropertyDescriptor::completePropertyDescriptor(ObjectPropertyDescript
     }
     // 8. Return Desc.
 }
+
+#if defined(ESCARGOT_USE_32BIT_IN_64BIT)
+void CompressedObjectPropertyValueVector::resizeWithRealloc(size_t newSize)
+{
+    if (newSize) {
+        m_buffer = m_buffer
+            ? static_cast<ObjectPropertyValue*>(GC_REALLOC(m_buffer.raw(), newSize * sizeof(ObjectPropertyValue)))
+            : CustomAllocator<ObjectPropertyValue>().allocate(newSize);
+    } else if (m_buffer) {
+        GC_FREE(m_buffer.raw());
+        m_buffer = nullptr;
+    }
+}
+
+void* Object::operator new(size_t size)
+{
+    ASSERT(size == sizeof(Object));
+    if (UNLIKELY(!Heap::isCompressedTypeInitialized(Heap::CompressedType::Object))) {
+        GC_word bitmap[(sizeof(Object) / 4 + GC_WORDSZ - 1) / GC_WORDSZ] = { 0 };
+        fillCompressedGCDescriptor(bitmap);
+        Heap::initializeCompressedType(Heap::CompressedType::Object, size, bitmap, sizeof(Object) / 4);
+    }
+    return Heap::mallocCompressed(Heap::CompressedType::Object, size);
+}
+#endif
 
 Object::Object(ExecutionState& state)
     : m_structure(state.context()->defaultStructureForObject())
@@ -834,7 +859,7 @@ bool Object::defineOwnPropertyMethod(ExecutionState& state, const ObjectProperty
             return false;
         }
 
-        auto structureBefore = m_structure;
+        ObjectStructure* structureBefore = m_structure;
         size_t previousPropertyCount = structureBefore->propertyCount();
         m_structure = addPropertyToStructure(P, desc.toObjectStructurePropertyDescriptor());
         ASSERT(structureBefore != m_structure);
@@ -2510,7 +2535,7 @@ void Object::addFinalizer(FinalizerFunction fn, void* data)
 
 #define FINALIZER_CALLBACK()                                         \
     Object* self = (Object*)obj;                                     \
-    auto r = self->extendedExtraData();                              \
+    auto r = (ObjectExtendedExtraData*)data;                         \
     for (size_t i = 0; i < r->m_finalizer.size(); i++) {             \
         if (LIKELY(!!r->m_finalizer[i].first)) {                     \
             r->m_finalizer[i].first(self, r->m_finalizer[i].second); \
@@ -2522,18 +2547,18 @@ void Object::addFinalizer(FinalizerFunction fn, void* data)
         GC_finalization_proc of = nullptr;
         void* od = nullptr;
         GC_REGISTER_FINALIZER_NO_ORDER(
-            this, [](void* obj, void*) {
+            this, [](void* obj, void* data) {
                 FINALIZER_CALLBACK()
             },
-            nullptr, &of, &od);
+            r, &of, &od);
         ASSERT(!of);
         ASSERT(!od);
 #else
         GC_REGISTER_FINALIZER_NO_ORDER(
-            this, [](void* obj, void*) {
+            this, [](void* obj, void* data) {
                 FINALIZER_CALLBACK()
             },
-            nullptr, nullptr, nullptr);
+            r, nullptr, nullptr);
 #endif
     }
 

@@ -23,6 +23,7 @@
 #include "runtime/PointerValue.h"
 #include "runtime/ObjectStructure.h"
 #include "runtime/ObjectPrivateMemberStructure.h"
+#include "runtime/CompressibleHeapPointer.h"
 #include "util/Vector.h"
 #include "util/TightVector.h"
 
@@ -37,6 +38,108 @@ class ArrayBufferObject;
 class ArrayBufferView;
 class DataViewObject;
 class ExecutionPauser;
+
+#if defined(ESCARGOT_USE_32BIT_IN_64BIT)
+// The usual ObjectPropertyValueVector also lives on the stack during object
+// creation.  Only this heap-resident view may derive a cage base from `this`.
+class CompressedObjectPropertyValueVector {
+public:
+    CompressedObjectPropertyValueVector() = default;
+    CompressedObjectPropertyValueVector(ObjectPropertyValueVector&& values)
+        : m_buffer(values.takeBuffer())
+    {
+    }
+
+    CompressedObjectPropertyValueVector(const CompressedObjectPropertyValueVector&) = delete;
+    CompressedObjectPropertyValueVector& operator=(const CompressedObjectPropertyValueVector&) = delete;
+
+    ~CompressedObjectPropertyValueVector()
+    {
+        if (m_buffer) {
+            GC_FREE(m_buffer.raw());
+        }
+    }
+
+    void operator=(ObjectPropertyValueVector&& values)
+    {
+        if (m_buffer) {
+            GC_FREE(m_buffer.raw());
+        }
+        m_buffer = values.takeBuffer();
+    }
+
+    bool isNonFastMode() const { return m_buffer.isTaggedEmpty(); }
+    void setNonFastMode() { m_buffer.setTaggedEmpty(); }
+    void setFastMode() { m_buffer.clearTag(); }
+    // The property buffer's alignment bit also stores Object's rare-data
+    // state. Pointer updates retain it, and the typed GC masks it out.
+    bool hasRareDataTag() const { return m_buffer.hasTag(); }
+    void setRareDataTag() { m_buffer.setTag(); }
+
+    ObjectPropertyValue& operator[](size_t index) { return m_buffer.value()[index]; }
+    const ObjectPropertyValue& operator[](size_t index) const { return m_buffer.value()[index]; }
+    ALWAYS_INLINE ObjectPropertyValue& atWithBase(size_t index, uintptr_t base)
+    {
+        return m_buffer.valueWithBase(base)[index];
+    }
+    ALWAYS_INLINE const ObjectPropertyValue& atWithBase(size_t index, uintptr_t base) const
+    {
+        return m_buffer.valueWithBase(base)[index];
+    }
+    uint32_t compressedPayload() const { return m_buffer.compressedPayload(); }
+    ObjectPropertyValue* data() { return m_buffer.raw(); }
+    const ObjectPropertyValue* data() const { return m_buffer.raw(); }
+
+    void reset(ObjectPropertyValue* buffer)
+    {
+        ASSERT(!m_buffer);
+        m_buffer = buffer;
+    }
+
+    ObjectPropertyValue* takeBuffer()
+    {
+        ObjectPropertyValue* buffer = m_buffer.raw();
+        m_buffer = nullptr;
+        return buffer;
+    }
+
+    void expandBuffer(size_t size)
+    {
+        withVector([size](ObjectPropertyValueVector& values) { values.expandBuffer(size); });
+    }
+    void resizeWithUninitializedValues(size_t oldSize, size_t newSize)
+    {
+        withVector([oldSize, newSize](ObjectPropertyValueVector& values) { values.resizeWithUninitializedValues(oldSize, newSize); });
+    }
+    void resizeWithRealloc(size_t newSize);
+    void pushBack(const ObjectPropertyValue& value, size_t newSize)
+    {
+        withVector([&](ObjectPropertyValueVector& values) { values.pushBack(value, newSize); });
+    }
+    void insert(size_t position, const ObjectPropertyValue& value, size_t currentSize)
+    {
+        withVector([&](ObjectPropertyValueVector& values) { values.insert(position, value, currentSize); });
+    }
+    void erase(size_t position, size_t currentSize)
+    {
+        withVector([&](ObjectPropertyValueVector& values) { values.erase(position, currentSize); });
+    }
+
+private:
+    template <typename F>
+    void withVector(F&& operation)
+    {
+        ObjectPropertyValueVector values;
+        values.reset(m_buffer.raw());
+        m_buffer = nullptr;
+        operation(values);
+        m_buffer = values.takeBuffer();
+    }
+
+    CompressibleHeapPointer<ObjectPropertyValue, true> m_buffer;
+};
+static_assert(sizeof(CompressedObjectPropertyValueVector) == 4, "object property storage should be one compressed pointer");
+#endif
 
 #define OBJECT_PROPERTY_NAME_UINT32_VIAS 2
 #define MAXIMUM_UINT_FOR_32BIT_PROPERTY_NAME (std::numeric_limits<uint32_t>::max() >> OBJECT_PROPERTY_NAME_UINT32_VIAS)
@@ -779,6 +882,10 @@ class Object : public PointerValue {
     friend class ObjectTemplate;
 
 public:
+#if defined(ESCARGOT_USE_32BIT_IN_64BIT)
+    static constexpr size_t compressedValuesGCSlot() { return offsetof(Object, m_values) / 4; }
+    void* operator new(size_t size);
+#endif
     explicit Object(ExecutionState& state);
     explicit Object(ExecutionState& state, Object* proto);
     enum PrototypeIsNullTag { PrototypeIsNull };
@@ -834,32 +941,62 @@ public:
     // internal [[prototype]]
     virtual Value getPrototype(ExecutionState&)
     {
-        Object* prototype = m_prototype;
+        Optional<Object*> prototype = m_prototype.getWithBase(reinterpret_cast<uintptr_t>(this) & ~uintptr_t(UINT32_MAX));
         if (UNLIKELY(hasRareData())) {
             prototype = rareData()->m_prototype;
         }
-        return prototype ? prototype : Value(Value::Null);
+        return prototype ? Value(prototype.value()) : Value(Value::Null);
     }
 
     // internal [[prototype]]
     virtual Object* getPrototypeObject(ExecutionState&)
     {
-        Object* prototype = m_prototype;
+        Optional<Object*> prototype = m_prototype.getWithBase(reinterpret_cast<uintptr_t>(this) & ~uintptr_t(UINT32_MAX));
         if (UNLIKELY(hasRareData())) {
             prototype = rareData()->m_prototype;
         }
-        return prototype;
+        return prototype.unwrap();
     }
 
     Optional<Object*> rawInternalPrototypeObject()
     {
-        Object* prototype = m_prototype;
+        Optional<Object*> prototype = m_prototype.getWithBase(reinterpret_cast<uintptr_t>(this) & ~uintptr_t(UINT32_MAX));
 
         if (UNLIKELY(hasRareData())) {
             prototype = rareData()->m_prototype;
         }
         return prototype;
     }
+
+#if defined(ESCARGOT_USE_32BIT_IN_64BIT)
+    ALWAYS_INLINE Optional<Object*> getPrototypeObjectWithBase(ExecutionState& state, uintptr_t base)
+    {
+        // A receiver with the same structure can still be a Proxy or another
+        // exotic object. Only ordinary vtables allow bypassing the virtual
+        // internal method on a simple-IC hit.
+        if (LIKELY(hasVTag(g_objectTag) || hasVTag(g_prototypeObjectTag))) {
+            return rawInternalPrototypeObjectWithBase(base);
+        }
+        return getPrototypeObject(state);
+    }
+
+    ALWAYS_INLINE Optional<Object*> rawInternalPrototypeObjectWithBase(uintptr_t base) const
+    {
+        // A cached chain normally has a next prototype. Keep that decode
+        // inline instead of sending every hop to a cold non-null branch.
+        if (UNLIKELY(!m_prototype)) {
+            return nullptr;
+        }
+        ASSERT(base == (reinterpret_cast<uintptr_t>(this) & ~uintptr_t(UINT32_MAX)));
+        // OR preserves the checked non-zero offset. It lets the compiler
+        // remove another null test when advancing the cached chain.
+        Object* prototype = reinterpret_cast<Object*>(base | m_prototype.compressedPayload());
+        if (UNLIKELY(hasRareData())) {
+            return reinterpret_cast<ObjectRareData*>(prototype)->m_prototype;
+        }
+        return prototype;
+    }
+#endif
 
     Optional<Value> readConstructorSlotWithoutState()
     {
@@ -1005,13 +1142,21 @@ public:
     {
         if (!hasRareData()) {
             m_prototype = (Object*)(new ObjectRareData(this));
+#if defined(ESCARGOT_USE_32BIT_IN_64BIT)
+            m_values.setRareDataTag();
+#endif
         }
         return rareData();
     }
 
     inline bool hasRareData() const
     {
-        return (m_prototype != nullptr && m_prototype->isObjectRareData());
+#if defined(ESCARGOT_USE_32BIT_IN_64BIT)
+        ASSERT(m_values.hasRareDataTag() == (m_prototype && m_prototype.value()->isObjectRareData()));
+        return m_values.hasRareDataTag();
+#else
+        return m_prototype != nullptr && m_prototype->isObjectRareData();
+#endif
     }
 
     inline bool hasExtendedExtraData() const
@@ -1298,6 +1443,14 @@ public:
     }
 
 protected:
+#if defined(ESCARGOT_USE_32BIT_IN_64BIT)
+    static inline void fillCompressedGCDescriptor(GC_word* desc)
+    {
+        GC_set_bit(desc, offsetof(Object, m_structure) / 4);
+        GC_set_bit(desc, offsetof(Object, m_prototype) / 4);
+        GC_set_bit(desc, offsetof(Object, m_values) / 4);
+    }
+#endif
     static inline void fillGCDescriptor(GC_word* desc)
     {
         GC_set_bit(desc, GC_WORD_OFFSET(Object, m_structure));
@@ -1309,8 +1462,8 @@ protected:
         : m_structure(nullptr)
         , m_prototype(nullptr)
     {
-        // dummy default constructor
-        // only called by VMInstance::initialize to set tag value
+        // Leave heap references empty for VMInstance's tag initialization and
+        // DateObject's stack temporaries that use only their time value/cache.
     }
 
     explicit Object(ExecutionState& state, Object* proto, size_t defaultSpace);
@@ -1322,7 +1475,7 @@ protected:
     inline ObjectRareData* rareData() const
     {
         ASSERT(hasRareData());
-        return (ObjectRareData*)m_prototype;
+        return reinterpret_cast<ObjectRareData*>(m_prototype.valueWithBase(reinterpret_cast<uintptr_t>(this) & ~uintptr_t(UINT32_MAX)));
     }
 
     ObjectExtendedExtraData* extendedExtraData()
@@ -1331,9 +1484,13 @@ protected:
         return rareData()->m_extendedExtraData;
     }
 
-    ObjectStructure* m_structure;
-    Object* m_prototype;
+    CompressibleHeapPointer<ObjectStructure> m_structure;
+    CompressibleHeapPointer<Object> m_prototype;
+#if defined(ESCARGOT_USE_32BIT_IN_64BIT)
+    CompressedObjectPropertyValueVector m_values;
+#else
     ObjectPropertyValueVector m_values;
+#endif
 
     ALWAYS_INLINE ObjectStructureFindResult findPropertyInStructure(const ObjectPropertyName& propertyName)
     {
@@ -1404,7 +1561,7 @@ protected:
 
     ObjectStructure* structure() const
     {
-        return m_structure;
+        return m_structure.value();
     }
 
     ALWAYS_INLINE Value getOwnDataPropertyUtilForObject(ExecutionState& state, size_t idx)
@@ -1429,7 +1586,7 @@ protected:
             m_values[idx] = newValue;
             return true;
         } else {
-#if defined(ESCARGOT_64) && defined(ESCARGOT_USE_32BIT_IN_64BIT)
+#if defined(ESCARGOT_USE_32BIT_IN_64BIT)
             EncodedValue t = m_values[idx];
             bool ret = descriptor.nativeGetterSetterData()->m_setter(state, this, receiver, t, newValue);
             m_values[idx] = t;
@@ -1507,6 +1664,10 @@ protected:
     // redefine function used only for builtin installation
     void redefineOwnProperty(ExecutionState& state, const ObjectPropertyName& P, const ObjectPropertyDescriptor& desc);
 };
+
+#if defined(ESCARGOT_USE_32BIT_IN_64BIT)
+COMPILE_ASSERT(sizeof(Object) == 24, "Object should use three 4-byte pointer slots");
+#endif
 
 class DerivedObject : public Object {
     // DerivedObject is a pure virtual class for sub classes of `Object`
