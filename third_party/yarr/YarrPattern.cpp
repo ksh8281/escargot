@@ -931,6 +931,31 @@ private:
     Vector<CharacterRange> m_rangesUnicode;
 };
 
+template<std::unique_ptr<CharacterClass> (*create)()>
+const CharacterClass* YarrPattern::sharedCharacterClass()
+{
+    // C++11 initializes the cache once, including with concurrent isolates.
+    // Keep the class alive for the process lifetime: GC finalizers may still
+    // reference it after ordinary static destructors have run.
+    static const CharacterClass* const characterClass = [] {
+        auto result = create();
+        result->initializeLatin1Bitmap();
+        return result.release();
+    }();
+    return characterClass;
+}
+
+const CharacterClass* YarrPattern::anyCharacterClass() { return sharedCharacterClass<anycharCreate>(); }
+const CharacterClass* YarrPattern::newlineCharacterClass() { return sharedCharacterClass<newlineCreate>(); }
+const CharacterClass* YarrPattern::digitsCharacterClass() { return sharedCharacterClass<digitsCreate>(); }
+const CharacterClass* YarrPattern::spacesCharacterClass() { return sharedCharacterClass<spacesCreate>(); }
+const CharacterClass* YarrPattern::wordcharCharacterClass() { return sharedCharacterClass<wordcharCreate>(); }
+const CharacterClass* YarrPattern::wordUnicodeIgnoreCaseCharCharacterClass() { return sharedCharacterClass<wordUnicodeIgnoreCaseCharCreate>(); }
+const CharacterClass* YarrPattern::nondigitsCharacterClass() { return sharedCharacterClass<nondigitsCreate>(); }
+const CharacterClass* YarrPattern::nonspacesCharacterClass() { return sharedCharacterClass<nonspacesCreate>(); }
+const CharacterClass* YarrPattern::nonwordcharCharacterClass() { return sharedCharacterClass<nonwordcharCreate>(); }
+const CharacterClass* YarrPattern::nonwordUnicodeIgnoreCaseCharCharacterClass() { return sharedCharacterClass<nonwordUnicodeIgnoreCaseCharCreate>(); }
+
 class YarrPatternConstructor {
     class UnresolvedForwardReference {
     public:
@@ -1881,7 +1906,7 @@ public:
         if (alternatives.size() != 1)
             return;
 
-        CharacterClass* dotCharacterClass = dotAll() ? m_pattern.anyCharacterClass() : m_pattern.newlineCharacterClass();
+        const CharacterClass* dotCharacterClass = dotAll() ? m_pattern.anyCharacterClass() : m_pattern.newlineCharacterClass();
         PatternAlternative* alternative = alternatives[0].get();
         Vector<PatternTerm>& terms = alternative->m_terms;
         if (terms.size() >= 3) {

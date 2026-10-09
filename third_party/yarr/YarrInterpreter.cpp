@@ -476,7 +476,7 @@ public:
         bool decodeSurrogatePairs;
     };
 
-    bool testCharacterClass(CharacterClass* characterClass, char32_t ch)
+    bool testCharacterClass(const CharacterClass* characterClass, char32_t ch)
     {
         auto linearSearchMatches = [ch](const Vector<char32_t>& matches) {
             for (unsigned i = 0; i < matches.size(); ++i) {
@@ -713,7 +713,7 @@ public:
     bool checkCharacterClassDontAdvanceInputForNonBMP(ByteTerm& term, unsigned negativeInputOffset)
     {
         ASSERT(term.isCharacterClass());
-        CharacterClass* characterClass = term.atom.characterClass;
+        const CharacterClass* characterClass = term.atom.characterClass;
 
         if (term.matchDirection() == Backward && negativeInputOffset > input.getPos())
             return false;
@@ -2592,7 +2592,7 @@ private:
     // Interpreter::testCharacterClass(): it splits the lookup at 0x80 and does
     // not consult m_table. Being exact rather than a superset is what makes it
     // safe to complement this for an inverted class.
-    static bool addCharacterClass(StartCharFilter& filter, CharacterClass* characterClass)
+    static bool addCharacterClass(StartCharFilter& filter, const CharacterClass* characterClass)
     {
         // Class set strings (/v) match more than a single character. Those
         // patterns are unicode ones and already rejected; this is a safety net.
@@ -2910,7 +2910,7 @@ public:
         appendPatternCharacter(term);
     }
 
-    void atomCharacterClass(CharacterClass* characterClass, bool invert, MatchDirection matchDirection, unsigned inputPosition, unsigned frameLocation, Checked<unsigned> quantityMaxCount, QuantifierType quantityType, OptionSet<Flags> flags)
+    void atomCharacterClass(const CharacterClass* characterClass, bool invert, MatchDirection matchDirection, unsigned inputPosition, unsigned frameLocation, Checked<unsigned> quantityMaxCount, QuantifierType quantityType, OptionSet<Flags> flags)
     {
         m_bodyDisjunction->terms.append(ByteTerm(characterClass, invert, inputPosition, flags));
 

@@ -47,7 +47,7 @@ struct ByteTerm {
                     char32_t lo;
                     char32_t hi;
                 } casedCharacter;
-                CharacterClass* characterClass;
+                const CharacterClass* characterClass;
                 struct {
                     unsigned subpatternId;
                     unsigned duplicateNamedGroupId;
@@ -183,7 +183,7 @@ struct ByteTerm {
         atom.quantityMaxCount = quantityCount;
     }
 
-    ByteTerm(CharacterClass* characterClass, bool invert, unsigned inputPos, OptionSet<Flags> flags)
+    ByteTerm(const CharacterClass* characterClass, bool invert, unsigned inputPos, OptionSet<Flags> flags)
         : type(ByteTerm::Type::CharacterClass)
         , m_flags(flags)
         , m_capture(false)
@@ -611,9 +611,9 @@ public:
     unsigned m_offsetsSize;
     Vector<unsigned> m_duplicateNamedGroupForSubpatternId;
 
-    CharacterClass* newlineCharacterClass;
-    CharacterClass* wordcharCharacterClass;
-    CharacterClass* ignoreCaseWordcharCharacterClass;
+    const CharacterClass* newlineCharacterClass;
+    const CharacterClass* wordcharCharacterClass;
+    const CharacterClass* ignoreCaseWordcharCharacterClass;
 #if defined(ENABLE_YARR_START_CHAR_FILTER)
     StartCharFilter m_startCharFilter;
     ::Escargot::Optional<FixedPrefixSearch*> m_fixedPrefixSearch;
