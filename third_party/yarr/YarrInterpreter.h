@@ -511,6 +511,8 @@ struct FixedPrefixSearch {
     StartCharFilter positions[maxLength];
     uint8_t shifts[256] { };
     unsigned length { 0 };
+    // A capture-free, case-sensitive literal can bypass bytecode execution.
+    Vector<UChar> atom;
 };
 
 struct BytecodePattern : public gc {

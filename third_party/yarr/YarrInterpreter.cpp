@@ -2307,6 +2307,28 @@ public:
         if (!input.isAvailableInput(0))
             return offsetNoMatch;
 
+#if defined(ENABLE_YARR_START_CHAR_FILTER)
+        if (pattern->m_fixedPrefixSearch && !pattern->m_fixedPrefixSearch.value()->atom.isEmpty()) {
+            const auto& atom = pattern->m_fixedPrefixSearch.value()->atom;
+            unsigned length = atom.size();
+            while (input.isAvailableInput(length)) {
+                if (!advanceToPossibleStart())
+                    return offsetNoMatch;
+                if (!input.isAvailableInput(length))
+                    return offsetNoMatch;
+                unsigned i = 0;
+                for (; i < length && input.peek(i) == atom[i]; ++i) { }
+                if (i == length) {
+                    output[0] = input.getPos();
+                    output[1] = output[0] + length;
+                    return output[0];
+                }
+                input.next();
+            }
+            return offsetNoMatch;
+        }
+#endif
+
         for (unsigned i = 0; i < pattern->m_body->m_numSubpatterns + 1; ++i)
             output[i << 1] = offsetNoMatch;
 
@@ -2386,6 +2408,18 @@ public:
             return nullptr;
 
         FixedPrefixSearch search;
+        if (body.value()->m_alternatives.size() == 1 && !pattern.m_numSubpatterns) {
+            for (auto& term : body.value()->m_alternatives[0]->m_terms) {
+                if (term.type != PatternTerm::Type::PatternCharacter || term.ignoreCase()
+                    || term.matchDirection() != Forward || term.quantityMinCount != 1 || term.quantityMaxCount != 1
+                    || !U_IS_BMP(term.patternCharacter)) {
+                    search.atom.clear();
+                    break;
+                }
+                search.atom.append(static_cast<UChar>(term.patternCharacter));
+            }
+        }
+
         unsigned length = FixedPrefixSearch::maxLength;
         for (auto& alternative : body.value()->m_alternatives) {
             if (alternative->onceThrough())
@@ -2450,7 +2484,7 @@ public:
                 search.shifts[ch] = shift;
             }
         }
-        if (!search.length)
+        if (!search.length && search.atom.isEmpty())
             return nullptr;
         return new FixedPrefixSearch(WTFMove(search));
     }
