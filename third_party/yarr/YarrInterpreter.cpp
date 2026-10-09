@@ -1880,7 +1880,10 @@ public:
 
         // Only the body may skip start offsets; a parentheses/assertion
         // disjunction has to match exactly where its caller left the input.
-        if (disjunction == pattern->m_body.get() && !advanceToPossibleStart())
+        // A once-through alternative has to try the requested position. Do
+        // not scan ahead before its BOL check; the body search loop will skip
+        // anchored alternatives and filter later starts if necessary.
+        if (disjunction == pattern->m_body.get() && !disjunction->terms[0].alternative.onceThrough && !advanceToPossibleStart())
             return JSRegExpResult::NoMatch;
 
         context->matchBegin = input.getPos();
