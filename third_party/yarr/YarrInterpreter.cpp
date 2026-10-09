@@ -2393,7 +2393,7 @@ public:
             const auto& search = *pattern->m_fixedPrefixSearch.value();
             if (search.anchoredStart && input.getPos())
                 return offsetNoMatch;
-            if (search.anchoredEnd && !search.anchoredStart && input.end() >= search.longestAtomLength)
+            if (search.anchoredEnd && !search.anchoredStart && !pattern->sticky() && input.end() >= search.longestAtomLength)
                 input.setPos(std::max(input.getPos(), input.end() - search.longestAtomLength));
             while (input.isAvailableInput(0)) {
                 if (!advanceToPossibleStart())
@@ -2492,9 +2492,6 @@ class StartCharFilterBuilder {
 public:
     static ::Escargot::Optional<FixedPrefixSearch*> buildFixedPrefixSearch(YarrPattern& pattern)
     {
-        if (pattern.eitherUnicode() || pattern.sticky())
-            return nullptr;
-
         ::Escargot::Optional<PatternDisjunction*> body = pattern.m_body;
         if (!body || body.value()->m_alternatives.isEmpty())
             return nullptr;
@@ -2504,6 +2501,11 @@ public:
             search.atoms.clear();
             search.atoms.shrinkToFit();
         }
+        // BMP atoms without surrogates cannot match inside a surrogate pair.
+        // Sticky atoms compare only the requested position. Neither uses the
+        // code-unit prefix skipping reserved for legacy non-sticky patterns.
+        if (pattern.eitherUnicode() || pattern.sticky())
+            return search.atoms.isEmpty() ? nullptr : new FixedPrefixSearch(WTFMove(search));
 
         unsigned length = FixedPrefixSearch::maxLength;
         for (auto& alternative : body.value()->m_alternatives) {
@@ -2614,10 +2616,13 @@ public:
                 const auto& term = terms[i];
                 if (term.type != PatternTerm::Type::PatternCharacter || term.m_currentFlags.contains(Flags::IgnoreCase)
                     || term.m_matchDirection != Forward || term.quantityMinCount != 1 || term.quantityMaxCount != 1
-                    || !U_IS_BMP(term.patternCharacter))
+                    || !U_IS_BMP(term.patternCharacter)
+                    || (pattern.eitherUnicode() && U_IS_SURROGATE(term.patternCharacter)))
                     return false;
                 atom.append(static_cast<UChar>(term.patternCharacter));
             }
+            if (pattern.eitherUnicode() && atom.isEmpty())
+                return false;
             search.longestAtomLength = std::max(search.longestAtomLength, static_cast<unsigned>(atom.size()));
             search.atoms.append(WTFMove(atom));
         }
