@@ -117,6 +117,8 @@ struct ByteTerm {
         PatternCasedCharacterGreedy,
         PatternCasedCharacterNonGreedy,
         CharacterClass,
+        CapturedCharacterClass,
+        CheckInputCapturedCharacterClass,
         BackReference,
         ParenthesesSubpattern,
         ParenthesesSubpatternOnceBegin,
@@ -418,7 +420,8 @@ struct ByteTerm {
 
     bool isCharacterClass()
     {
-        return type == Type::CharacterClass;
+        return type == Type::CharacterClass || type == Type::CapturedCharacterClass
+            || type == Type::CheckInputCapturedCharacterClass;
     }
 
     bool containsAnyCaptures()

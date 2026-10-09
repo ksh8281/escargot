@@ -2142,6 +2142,24 @@ public:
             if (matchCharacterClass(currentTerm(), context))
                 MATCH_NEXT();
             BACKTRACK();
+        case ByteTerm::Type::CheckInputCapturedCharacterClass:
+            if (!input.checkInput(currentTerm().frameLocation))
+                BACKTRACK();
+            FALLTHROUGH;
+        case ByteTerm::Type::CapturedCharacterClass: {
+            unsigned captureOffset = currentTerm().atom.parenthesesWidth << 1;
+            if (checkCharacterClass(currentTerm(), currentTerm().inputPosition)) {
+                unsigned begin = input.getPos() - currentTerm().inputPosition;
+                output[captureOffset] = begin;
+                output[captureOffset + 1] = begin + 1;
+                MATCH_NEXT();
+            }
+            output[captureOffset] = offsetNoMatch;
+            output[captureOffset + 1] = offsetNoMatch;
+            if (currentTerm().type == ByteTerm::Type::CheckInputCapturedCharacterClass)
+                input.uncheckInput(currentTerm().frameLocation);
+            BACKTRACK();
+        }
         case ByteTerm::Type::BackReference:
             if (matchBackReference(currentTerm(), context))
                 MATCH_NEXT();
@@ -2314,6 +2332,15 @@ public:
             if (backtrackCharacterClass(currentTerm(), context))
                 MATCH_NEXT();
             BACKTRACK();
+        case ByteTerm::Type::CheckInputCapturedCharacterClass:
+            input.uncheckInput(currentTerm().frameLocation);
+            FALLTHROUGH;
+        case ByteTerm::Type::CapturedCharacterClass: {
+            unsigned captureOffset = currentTerm().atom.parenthesesWidth << 1;
+            output[captureOffset] = offsetNoMatch;
+            output[captureOffset + 1] = offsetNoMatch;
+            BACKTRACK();
+        }
         case ByteTerm::Type::BackReference:
             if (backtrackBackReference(currentTerm(), context))
                 MATCH_NEXT();
@@ -3456,6 +3483,31 @@ public:
 
         bool capture = m_bodyDisjunction->terms[beginTerm].capture();
         unsigned subpatternId = m_bodyDisjunction->terms[beginTerm].subpatternId();
+
+        // A fixed single-class capture has no alternatives or variable-width
+        // state to restore. Fuse its capture writes with the class comparison
+        // before the enclosing alternative's offsets are finalized.
+        if (capture && !m_pattern.eitherUnicode() && !m_pattern.hasDuplicateNamedCaptureGroups()
+            && quantityType == QuantifierType::FixedCount && quantityMaxCount == 1
+            && m_bodyDisjunction->terms[beginTerm].matchDirection() == Forward && endTerm == beginTerm + 2) {
+            ByteTerm term = m_bodyDisjunction->terms[beginTerm + 1];
+            if (term.type == ByteTerm::Type::CharacterClass && term.matchDirection() == Forward
+                && term.atom.quantityType == QuantifierType::FixedCount && term.atom.quantityMaxCount == 1
+                && term.inputPosition == m_bodyDisjunction->terms[beginTerm].inputPosition
+                && term.inputPosition == inputPosition + 1) {
+                term.type = ByteTerm::Type::CapturedCharacterClass;
+                term.atom.parenthesesWidth = subpatternId;
+                term.m_capture = true;
+                m_bodyDisjunction->terms.shrink(beginTerm);
+                if (beginTerm && m_bodyDisjunction->terms.last().type == ByteTerm::Type::CheckInput) {
+                    term.type = ByteTerm::Type::CheckInputCapturedCharacterClass;
+                    term.frameLocation = m_bodyDisjunction->terms.last().checkInputCount;
+                    m_bodyDisjunction->terms.last() = term;
+                } else
+                    m_bodyDisjunction->terms.append(term);
+                return;
+            }
+        }
 
         m_bodyDisjunction->terms.append(ByteTerm(ByteTerm::Type::ParenthesesSubpatternOnceEnd, subpatternId, capture, false, inputPosition, m_currentFlags));
         if (m_bodyDisjunction->terms[beginTerm].matchDirection() == Backward) {
