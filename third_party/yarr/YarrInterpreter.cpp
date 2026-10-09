@@ -2346,6 +2346,23 @@ public:
             input.setPos(std::max(input.getPos(), input.end() - pattern->m_endAnchoredFixedSize));
 
         using SpecificPattern = BytecodePattern::SpecificPattern;
+        if (pattern->m_specificPattern == SpecificPattern::Newlines) {
+            while (input.isAvailableInput(1)) {
+                char32_t ch = input.peek(0);
+                if (ch == '\r' || ch == '\n') {
+                    unsigned length = 1;
+                    if (ch == '\r' && input.isAvailableInput(2) && input.peek(1) == '\n')
+                        ++length;
+                    output[0] = input.getPos();
+                    output[1] = output[0] + length;
+                    return output[0];
+                }
+                if (pattern->sticky())
+                    break;
+                input.next();
+            }
+            return offsetNoMatch;
+        }
         if (pattern->m_specificPattern != SpecificPattern::None) {
             auto type = pattern->m_specificPattern;
             bool leading = type == SpecificPattern::LeadingSpacesStar || type == SpecificPattern::LeadingSpacesPlus;
@@ -2829,6 +2846,8 @@ public:
 
         auto bytecodePattern = makeUnique<BytecodePattern>(WTFMove(m_bodyDisjunction), m_allParenthesesInfo, m_pattern, allocator, m_pattern.offsetVectorBaseForNamedCaptures(), m_pattern.offsetsSize());
         bytecodePattern->m_specificPattern = extractSpacesPattern();
+        if (bytecodePattern->m_specificPattern == BytecodePattern::SpecificPattern::None)
+            bytecodePattern->m_specificPattern = extractNewlinesPattern();
 
 #if defined(ENABLE_YARR_START_CHAR_FILTER)
         StartCharFilter& startCharFilter = bytecodePattern->m_startCharFilter;
@@ -2876,6 +2895,48 @@ public:
         if (leading)
             return requiresOne ? SpecificPattern::LeadingSpacesPlus : SpecificPattern::LeadingSpacesStar;
         return requiresOne ? SpecificPattern::TrailingSpacesPlus : SpecificPattern::TrailingSpacesStar;
+    }
+
+    BytecodePattern::SpecificPattern extractNewlinesPattern()
+    {
+        using SpecificPattern = BytecodePattern::SpecificPattern;
+        if (m_pattern.m_numSubpatterns || m_pattern.m_containsModifiers)
+            return SpecificPattern::None;
+
+        auto* disjunction = m_pattern.m_body;
+        // Non-capturing wrappers do not alter this pattern's matching order.
+        while (disjunction->m_alternatives.size() == 1) {
+            auto& terms = disjunction->m_alternatives[0]->m_terms;
+            if (terms.size() != 1)
+                return SpecificPattern::None;
+            const auto& term = terms[0];
+            if (term.type != PatternTerm::Type::ParenthesesSubpattern || term.m_capture
+                || term.m_matchDirection != Forward || term.quantityMinCount != 1 || term.quantityMaxCount != 1)
+                return SpecificPattern::None;
+            disjunction = term.parentheses.disjunction;
+        }
+        if (disjunction->m_alternatives.size() != 2)
+            return SpecificPattern::None;
+
+        auto isCharacter = [](const PatternTerm& term, char32_t ch, bool optional) {
+            return term.type == PatternTerm::Type::PatternCharacter && term.patternCharacter == ch
+                && term.m_matchDirection == Forward && term.quantityMaxCount == 1
+                && term.quantityMinCount == (optional ? 0 : 1)
+                && term.quantityType == (optional ? QuantifierType::Greedy : QuantifierType::FixedCount);
+        };
+        auto isCRLF = [&](const PatternAlternative& alternative) {
+            const auto& terms = alternative.m_terms;
+            return terms.size() == 2 && isCharacter(terms[0], '\r', false) && isCharacter(terms[1], '\n', true);
+        };
+        auto isLF = [&](const PatternAlternative& alternative) {
+            const auto& terms = alternative.m_terms;
+            return terms.size() == 1 && isCharacter(terms[0], '\n', false);
+        };
+        const auto& first = *disjunction->m_alternatives[0];
+        const auto& second = *disjunction->m_alternatives[1];
+        if ((isCRLF(first) && isLF(second)) || (isLF(first) && isCRLF(second)))
+            return SpecificPattern::Newlines;
+        return SpecificPattern::None;
     }
 
     void checkInput(unsigned count)

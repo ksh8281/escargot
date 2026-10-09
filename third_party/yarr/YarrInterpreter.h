@@ -525,6 +525,7 @@ public:
         LeadingSpacesPlus,
         TrailingSpacesStar,
         TrailingSpacesPlus,
+        Newlines,
     };
 
     static void bytecodePatternClear(void* obj, void* cd)
