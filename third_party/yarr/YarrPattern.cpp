@@ -1799,15 +1799,10 @@ public:
     // We can presently avoid backtracking for:
     //   * where the parens are at the end of the regular expression (last term in any of the
     //     alternatives of the main body disjunction).
-    //   * where the parens are non-capturing, and quantified unbounded greedy (*).
+    //   * where the parens are non-capturing, and quantified unbounded greedy (* or +).
     //   * where the parens do not contain any capturing subpatterns.
     void checkForTerminalParentheses()
     {
-        // This check is much too crude; should be just checking whether the candidate
-        // node contains nested capturing subpatterns, not the whole expression!
-        if (m_pattern.m_numSubpatterns)
-            return;
-
         Vector<std::unique_ptr<PatternAlternative>>& alternatives = m_pattern.m_body->m_alternatives;
         for (size_t i = 0; i < alternatives.size(); ++i) {
             Vector<PatternTerm>& terms = alternatives[i]->m_terms;
@@ -1815,9 +1810,10 @@ public:
                 PatternTerm& term = terms.last();
                 if (term.type == PatternTerm::Type::ParenthesesSubpattern
                     && term.quantityType == QuantifierType::Greedy
-                    && term.quantityMinCount == 0
+                    && term.quantityMinCount <= 1
                     && term.quantityMaxCount == quantifyInfinite
-                    && !term.capture())
+                    && !term.capture()
+                    && !term.containsAnyCaptures())
                     term.parentheses.isTerminal = true;
             }
         }

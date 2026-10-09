@@ -1394,25 +1394,34 @@ public:
     {
         ASSERT(term.type == ByteTerm::Type::ParenthesesSubpatternTerminalBegin);
         ASSERT(term.atom.quantityType == QuantifierType::Greedy);
+        ASSERT(term.atom.quantityMinCount <= 1);
         ASSERT(term.atom.quantityMaxCount == quantifyInfinite);
         ASSERT(!term.capture());
 
         BackTrackInfoParenthesesTerminal* backTrack = reinterpret_cast<BackTrackInfoParenthesesTerminal*>(context->frame + term.frameLocation);
         backTrack->begin = input.getPos();
+        backTrack->entryPosition = input.getPos();
         return true;
     }
 
     bool matchParenthesesTerminalEnd(ByteTerm& term, DisjunctionContext* context)
     {
         ASSERT(term.type == ByteTerm::Type::ParenthesesSubpatternTerminalEnd);
+        ASSERT(term.atom.quantityMinCount <= 1);
 
         BackTrackInfoParenthesesTerminal* backTrack = reinterpret_cast<BackTrackInfoParenthesesTerminal*>(context->frame + term.frameLocation);
-        // Empty match is a failed match.
-        if (backTrack->begin == input.getPos())
-            return false;
+        if (backTrack->begin == input.getPos()) {
+            // One empty iteration satisfies +, but an empty iteration after
+            // any completed iteration must fail to prevent an endless loop.
+            if (!term.atom.quantityMinCount || backTrack->entryPosition != input.getPos())
+                return false;
+            backTrack->entryPosition = notFound;
+        }
+        backTrack->begin = input.getPos();
 
         // Successful match! Okay, what's next? - loop around and try to match more!
-        context->term -= (term.atom.parenthesesWidth + 1);
+        // Initialize the group once; subsequent iterations enter its body.
+        context->term -= term.atom.parenthesesWidth;
         return true;
     }
 
@@ -1420,11 +1429,19 @@ public:
     {
         ASSERT(term.type == ByteTerm::Type::ParenthesesSubpatternTerminalBegin);
         ASSERT(term.atom.quantityType == QuantifierType::Greedy);
+        ASSERT(term.atom.quantityMinCount <= 1);
         ASSERT(term.atom.quantityMaxCount == quantifyInfinite);
         ASSERT(!term.capture());
 
         // If we backtrack to this point, we have failed to match this iteration of the parens.
-        // Since this is greedy / zero minimum a failed is also accepted as a match!
+        // A failed iteration completes the match only after its minimum has
+        // been satisfied. There is no following term that could benefit from
+        // restoring an earlier iteration's alternatives.
+        if (term.atom.quantityMinCount) {
+            BackTrackInfoParenthesesTerminal* backTrack = reinterpret_cast<BackTrackInfoParenthesesTerminal*>(context->frame + term.frameLocation);
+            if (backTrack->entryPosition == input.getPos())
+                return false;
+        }
         context->term += term.atom.parenthesesWidth;
         return true;
     }
@@ -3464,6 +3481,7 @@ static_assert(sizeof(BackTrackInfoBackReference) == (YarrStackSpaceForBackTrackI
 static_assert(sizeof(BackTrackInfoAlternative) == (YarrStackSpaceForBackTrackInfoAlternative * sizeof(uintptr_t)), "");
 static_assert(sizeof(BackTrackInfoParentheticalAssertion) == (YarrStackSpaceForBackTrackInfoParentheticalAssertion * sizeof(uintptr_t)), "");
 static_assert(sizeof(BackTrackInfoParenthesesOnce) == (YarrStackSpaceForBackTrackInfoParenthesesOnce * sizeof(uintptr_t)), "");
+static_assert(sizeof(BackTrackInfoParenthesesTerminal) == (YarrStackSpaceForBackTrackInfoParenthesesTerminal * sizeof(uintptr_t)), "");
 static_assert(sizeof(Interpreter<UChar>::BackTrackInfoParentheses) <= (YarrStackSpaceForBackTrackInfoParentheses * sizeof(uintptr_t)), "");
 
 
