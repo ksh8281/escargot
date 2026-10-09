@@ -2389,21 +2389,32 @@ public:
         }
 
 #if defined(ENABLE_YARR_START_CHAR_FILTER)
-        if (pattern->m_fixedPrefixSearch && !pattern->m_fixedPrefixSearch.value()->atom.isEmpty()) {
-            const auto& atom = pattern->m_fixedPrefixSearch.value()->atom;
-            unsigned length = atom.size();
-            while (input.isAvailableInput(length)) {
+        if (pattern->m_fixedPrefixSearch && !pattern->m_fixedPrefixSearch.value()->atoms.isEmpty()) {
+            const auto& search = *pattern->m_fixedPrefixSearch.value();
+            if (search.anchoredStart && input.getPos())
+                return offsetNoMatch;
+            if (search.anchoredEnd && !search.anchoredStart && input.end() >= search.longestAtomLength)
+                input.setPos(std::max(input.getPos(), input.end() - search.longestAtomLength));
+            while (input.isAvailableInput(0)) {
                 if (!advanceToPossibleStart())
                     return offsetNoMatch;
-                if (!input.isAvailableInput(length))
-                    return offsetNoMatch;
-                unsigned i = 0;
-                for (; i < length && input.peek(i) == atom[i]; ++i) { }
-                if (i == length) {
-                    output[0] = input.getPos();
-                    output[1] = output[0] + length;
-                    return output[0];
+                // Preserve alternative order at each candidate position,
+                // including empty alternatives and strings of different sizes.
+                for (const auto& atom : search.atoms) {
+                    unsigned length = atom.size();
+                    if (!input.isAvailableInput(length)
+                        || (search.anchoredEnd && input.getPos() + length != input.end()))
+                        continue;
+                    unsigned i = 0;
+                    for (; i < length && input.peek(i) == atom[i]; ++i) { }
+                    if (i == length) {
+                        output[0] = input.getPos();
+                        output[1] = output[0] + length;
+                        return output[0];
+                    }
                 }
+                if (input.atEnd() || search.anchoredStart || pattern->sticky())
+                    break;
                 input.next();
             }
             return offsetNoMatch;
@@ -2489,22 +2500,17 @@ public:
             return nullptr;
 
         FixedPrefixSearch search;
-        if (body.value()->m_alternatives.size() == 1 && !pattern.m_numSubpatterns) {
-            for (auto& term : body.value()->m_alternatives[0]->m_terms) {
-                if (term.type != PatternTerm::Type::PatternCharacter || term.ignoreCase()
-                    || term.matchDirection() != Forward || term.quantityMinCount != 1 || term.quantityMaxCount != 1
-                    || !U_IS_BMP(term.patternCharacter)) {
-                    search.atom.clear();
-                    break;
-                }
-                search.atom.append(static_cast<UChar>(term.patternCharacter));
-            }
+        if (!collectLiteralAlternatives(pattern, search)) {
+            search.atoms.clear();
+            search.atoms.shrinkToFit();
         }
 
         unsigned length = FixedPrefixSearch::maxLength;
         for (auto& alternative : body.value()->m_alternatives) {
-            if (alternative->onceThrough())
-                return nullptr;
+            if (alternative->onceThrough()) {
+                length = 0;
+                break;
+            }
             StartCharFilter positions[FixedPrefixSearch::maxLength];
             unsigned count = 0;
             for (auto& term : alternative->m_terms) {
@@ -2565,9 +2571,57 @@ public:
                 search.shifts[ch] = shift;
             }
         }
-        if (!search.length && search.atom.isEmpty())
+        if (!search.length && search.atoms.isEmpty())
             return nullptr;
         return new FixedPrefixSearch(WTFMove(search));
+    }
+
+    static bool collectLiteralAlternatives(YarrPattern& pattern, FixedPrefixSearch& search)
+    {
+        if (pattern.m_numSubpatterns || pattern.m_containsModifiers || pattern.ignoreCase())
+            return false;
+        auto* disjunction = pattern.m_body;
+        unsigned first = 0;
+        unsigned last = 0;
+        while (disjunction->m_alternatives.size() == 1) {
+            const auto& terms = disjunction->m_alternatives[0]->m_terms;
+            first = 0;
+            last = terms.size();
+            if (!pattern.multiline()) {
+                if (first < last && terms[first].type == PatternTerm::Type::AssertionBOL) {
+                    search.anchoredStart = true;
+                    ++first;
+                }
+                if (first < last && terms[last - 1].type == PatternTerm::Type::AssertionEOL) {
+                    search.anchoredEnd = true;
+                    --last;
+                }
+            }
+            if (last - first != 1)
+                break;
+            const auto& term = terms[first];
+            if (term.type != PatternTerm::Type::ParenthesesSubpattern || term.m_capture
+                || term.m_matchDirection != Forward || term.quantityMinCount != 1 || term.quantityMaxCount != 1)
+                break;
+            disjunction = term.parentheses.disjunction;
+        }
+        for (auto& alternative : disjunction->m_alternatives) {
+            const auto& terms = alternative->m_terms;
+            unsigned begin = disjunction->m_alternatives.size() == 1 ? first : 0;
+            unsigned end = disjunction->m_alternatives.size() == 1 ? last : terms.size();
+            Vector<UChar> atom;
+            for (unsigned i = begin; i < end; ++i) {
+                const auto& term = terms[i];
+                if (term.type != PatternTerm::Type::PatternCharacter || term.m_currentFlags.contains(Flags::IgnoreCase)
+                    || term.m_matchDirection != Forward || term.quantityMinCount != 1 || term.quantityMaxCount != 1
+                    || !U_IS_BMP(term.patternCharacter))
+                    return false;
+                atom.append(static_cast<UChar>(term.patternCharacter));
+            }
+            search.longestAtomLength = std::max(search.longestAtomLength, static_cast<unsigned>(atom.size()));
+            search.atoms.append(WTFMove(atom));
+        }
+        return !search.atoms.isEmpty();
     }
 
     static bool build(YarrPattern& pattern, StartCharFilter& filter)
