@@ -506,6 +506,13 @@ struct StartCharFilter {
     bool valid { false };
 };
 
+struct FixedPrefixSearch {
+    static constexpr unsigned maxLength = 4;
+    StartCharFilter positions[maxLength];
+    uint8_t shifts[256] { };
+    unsigned length { 0 };
+};
+
 struct BytecodePattern : public gc {
     WTF_MAKE_TZONE_ALLOCATED(BytecodePattern);
 public:
@@ -548,6 +555,14 @@ public:
             characterClass->initializeLatin1Bitmap();
 
         m_numDuplicateNamedCaptureGroups = pattern.m_numDuplicateNamedCaptureGroups;
+    }
+
+    ~BytecodePattern()
+    {
+#if defined(ENABLE_YARR_START_CHAR_FILTER)
+        if (m_fixedPrefixSearch)
+            delete m_fixedPrefixSearch.value();
+#endif
     }
 
     size_t estimatedSizeInBytes() const { return m_body->estimatedSizeInBytes(); }
@@ -596,6 +611,7 @@ public:
     CharacterClass* ignoreCaseWordcharCharacterClass;
 #if defined(ENABLE_YARR_START_CHAR_FILTER)
     StartCharFilter m_startCharFilter;
+    ::Escargot::Optional<FixedPrefixSearch*> m_fixedPrefixSearch;
 #endif
 
 private:

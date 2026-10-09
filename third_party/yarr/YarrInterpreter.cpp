@@ -247,6 +247,18 @@ public:
             ++current;
         }
 
+        void advance(unsigned count)
+        {
+            ASSERT(count <= static_cast<size_t>(inputEnd - current));
+            current += count;
+        }
+
+        char32_t peek(unsigned offset)
+        {
+            ASSERT(offset < static_cast<size_t>(inputEnd - current));
+            return current[offset];
+        }
+
         void rewind(unsigned amount)
         {
             ASSERT(static_cast<size_t>(current - input) >= amount);
@@ -584,6 +596,30 @@ public:
     // implies the body cannot match the empty string.
     ALWAYS_INLINE bool advanceToPossibleStart()
     {
+        if (pattern->m_fixedPrefixSearch) {
+            const auto& search = *pattern->m_fixedPrefixSearch.value();
+            if (search.length) {
+                while (input.isAvailableInput(search.length)) {
+                    unsigned i = search.length;
+                    while (i) {
+                        --i;
+                        char32_t ch = input.peek(i);
+                        const auto& filter = search.positions[i];
+                        if (ch > 0xff ? !filter.mayStartAboveLatin1 : !(filter.latin1Bitmap[ch >> 5] & (1u << (ch & 31))))
+                            break;
+                        if (!i)
+                            return true;
+                    }
+                    char32_t last = input.peek(search.length - 1);
+                    // A later start can only match if this sampled character
+                    // occurs at its corresponding prefix offset. Use the
+                    // nearest such offset across every alternative, so the
+                    // Horspool shift never skips a possible match.
+                    input.advance(last <= 0xff ? search.shifts[last] : 1);
+                }
+                return false;
+            }
+        }
         if (!pattern->m_startCharFilter.valid)
             return true;
 
@@ -2340,6 +2376,85 @@ private:
 // everything that is not modelled here bails out instead of guessing.
 class StartCharFilterBuilder {
 public:
+    static ::Escargot::Optional<FixedPrefixSearch*> buildFixedPrefixSearch(YarrPattern& pattern)
+    {
+        if (pattern.eitherUnicode() || pattern.sticky())
+            return nullptr;
+
+        ::Escargot::Optional<PatternDisjunction*> body = pattern.m_body;
+        if (!body || body.value()->m_alternatives.isEmpty())
+            return nullptr;
+
+        FixedPrefixSearch search;
+        unsigned length = FixedPrefixSearch::maxLength;
+        for (auto& alternative : body.value()->m_alternatives) {
+            if (alternative->onceThrough())
+                return nullptr;
+            StartCharFilter positions[FixedPrefixSearch::maxLength];
+            unsigned count = 0;
+            for (auto& term : alternative->m_terms) {
+                if (count == FixedPrefixSearch::maxLength)
+                    break;
+                if (term.matchDirection() != Forward)
+                    break;
+                if (term.type == PatternTerm::Type::AssertionBOL || term.type == PatternTerm::Type::AssertionEOL
+                    || term.type == PatternTerm::Type::AssertionWordBoundary || term.type == PatternTerm::Type::ParentheticalAssertion)
+                    continue;
+                if (!term.quantityMinCount)
+                    break;
+
+                StartCharFilter filter;
+                if (term.type == PatternTerm::Type::PatternCharacter) {
+                    char32_t ch = term.patternCharacter;
+                    if (term.ignoreCase()) {
+                        if (!isASCII(ch))
+                            break;
+                        addChar(filter, toASCIILower(ch));
+                        addChar(filter, toASCIIUpper(ch));
+                    } else
+                        addChar(filter, ch);
+                } else if (term.type == PatternTerm::Type::CharacterClass) {
+                    // In legacy mode the parsed class already contains its
+                    // case-folded characters; checkCharacterClass does not
+                    // fold the subject. Unicode modes are excluded above.
+                    if (!addCharacterClassTerm(filter, term))
+                        break;
+                } else
+                    break;
+
+                unsigned minCount = term.quantityMinCount;
+                for (unsigned i = 0; i < minCount && count < FixedPrefixSearch::maxLength; ++i)
+                    positions[count++] = filter;
+                if (term.quantityMinCount != term.quantityMaxCount)
+                    break;
+            }
+            length = std::min(length, count);
+            for (unsigned i = 0; i < length; ++i) {
+                for (unsigned word = 0; word < 8; ++word)
+                    search.positions[i].latin1Bitmap[word] |= positions[i].latin1Bitmap[word];
+                search.positions[i].mayStartAboveLatin1 |= positions[i].mayStartAboveLatin1;
+            }
+        }
+
+        bool selective = false;
+        for (unsigned i = 0; i < length; ++i)
+            selective |= !search.positions[i].mayStartAboveLatin1 || !isFullLatin1Bitmap(search.positions[i]);
+        if (length >= 2 && selective) {
+            search.length = length;
+            for (unsigned ch = 0; ch < 256; ++ch) {
+                unsigned shift = length;
+                for (unsigned i = 0; i + 1 < length; ++i) {
+                    if (search.positions[i].latin1Bitmap[ch >> 5] & (1u << (ch & 31)))
+                        shift = length - i - 1;
+                }
+                search.shifts[ch] = shift;
+            }
+        }
+        if (!search.length)
+            return nullptr;
+        return new FixedPrefixSearch(WTFMove(search));
+    }
+
     static bool build(YarrPattern& pattern, StartCharFilter& filter)
     {
         // Unicode patterns advance start offsets by code point, so an offset
@@ -2619,6 +2734,7 @@ public:
 #if defined(ENABLE_YARR_START_CHAR_FILTER)
         StartCharFilter& startCharFilter = bytecodePattern->m_startCharFilter;
         startCharFilter.valid = StartCharFilterBuilder::build(m_pattern, startCharFilter);
+        bytecodePattern->m_fixedPrefixSearch = StartCharFilterBuilder::buildFixedPrefixSearch(m_pattern);
 #endif
 
         return bytecodePattern;
