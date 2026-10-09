@@ -2529,10 +2529,8 @@ public:
             search.atoms.clear();
             search.atoms.shrinkToFit();
         }
-        // BMP atoms without surrogates cannot match inside a surrogate pair.
-        // Sticky atoms compare only the requested position. Neither uses the
-        // code-unit prefix skipping reserved for legacy non-sticky patterns.
-        if (pattern.eitherUnicode() || pattern.sticky())
+        // Sticky atoms compare only the requested position.
+        if (pattern.sticky())
             return search.atoms.isEmpty() ? nullptr : new FixedPrefixSearch(WTFMove(search));
 
         unsigned length = FixedPrefixSearch::maxLength;
@@ -2557,6 +2555,8 @@ public:
                 StartCharFilter filter;
                 if (term.type == PatternTerm::Type::PatternCharacter) {
                     char32_t ch = term.patternCharacter;
+                    if (pattern.eitherUnicode() && (!U_IS_BMP(ch) || U_IS_SURROGATE(ch) || term.ignoreCase()))
+                        break;
                     if (term.ignoreCase()) {
                         if (!isASCII(ch))
                             break;
@@ -2565,9 +2565,23 @@ public:
                     } else
                         addChar(filter, ch);
                 } else if (term.type == PatternTerm::Type::CharacterClass) {
-                    // In legacy mode the parsed class already contains its
-                    // case-folded characters; checkCharacterClass does not
-                    // fold the subject. Unicode modes are excluded above.
+                    if (pattern.eitherUnicode()) {
+                        // A Unicode prefix position must consume exactly one
+                        // code unit. Exclude folding, inversion and surrogate
+                        // membership instead of treating a pair as two terms.
+                        const auto& characterClass = *term.characterClass;
+                        if (term.ignoreCase() || term.invert() || !characterClass.hasOneCharacterSize()
+                            || characterClass.hasNonBMPCharacters())
+                            break;
+                        bool hasSurrogates = false;
+                        for (auto ch : characterClass.m_matchesUnicode)
+                            hasSurrogates |= U_IS_SURROGATE(ch);
+                        for (auto range : characterClass.m_rangesUnicode)
+                            hasSurrogates |= range.begin <= 0xdfff && range.end >= 0xd800;
+                        if (hasSurrogates)
+                            break;
+                    }
+                    // Legacy classes already contain their case folds.
                     if (!addCharacterClassTerm(filter, term))
                         break;
                 } else
@@ -2742,8 +2756,8 @@ private:
     // safe to complement this for an inverted class.
     static bool addCharacterClass(StartCharFilter& filter, const CharacterClass* characterClass)
     {
-        // Class set strings (/v) match more than a single character. Those
-        // patterns are unicode ones and already rejected; this is a safety net.
+        // Class set strings (/v) can consume multiple code points and cannot
+        // contribute a filter for a single prefix position.
         if (characterClass->hasStrings())
             return false;
 
