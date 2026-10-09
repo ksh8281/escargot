@@ -2209,6 +2209,19 @@ public:
             if (matchCharacterClass(currentTerm(), context))
                 MATCH_NEXT();
             BACKTRACK();
+        case ByteTerm::Type::CharacterClassOrLiteralLookahead: {
+            if (!input.checkInput(1))
+                BACKTRACK();
+            char32_t ch = input.readCheckedDontAdvance(1);
+            if (testCharacterClass(currentTerm().classOrLookahead.characterClass, ch) != currentTerm().invert()
+                || (ch == currentTerm().classOrLookahead.character && input.isAvailableInput(1)
+                    && input.peek(0) == currentTerm().classOrLookahead.lookaheadCharacter)) {
+                context->matchEnd = input.getPos();
+                return JSRegExpResult::Match;
+            }
+            input.uncheckInput(1);
+            BACKTRACK();
+        }
         case ByteTerm::Type::CheckInputCapturedCharacterClass:
             if (!input.checkInput(currentTerm().frameLocation))
                 BACKTRACK();
@@ -2383,6 +2396,7 @@ public:
         case ByteTerm::Type::CheckInputBOLLiteral:
         case ByteTerm::Type::CheckInputCharacterClass:
         case ByteTerm::Type::CheckInputBOLCharacterClass:
+        case ByteTerm::Type::CharacterClassOrLiteralLookahead:
             input.uncheckInput(currentTerm().frameLocation);
             BACKTRACK();
 
@@ -3065,9 +3079,11 @@ public:
         }
 
         regexBegin(m_pattern.m_numSubpatterns, m_pattern.m_body->m_callFrameSize, m_pattern.m_body->m_alternatives[0]->onceThrough());
-        if (auto error = emitDisjunction(m_pattern.m_body, 0, 0)) {
-            errorCode = error.value();
-            return nullptr;
+        if (!emitClassOrLiteralLookahead()) {
+            if (auto error = emitDisjunction(m_pattern.m_body, 0, 0)) {
+                errorCode = error.value();
+                return nullptr;
+            }
         }
         regexEnd();
 
@@ -3081,6 +3097,41 @@ public:
         bytecodePattern->m_fixedPrefixSearch = StartCharFilterBuilder::buildFixedPrefixSearch(m_pattern);
 
         return bytecodePattern;
+    }
+
+    bool emitClassOrLiteralLookahead()
+    {
+        if (m_pattern.eitherUnicode() || m_pattern.ignoreCase() || m_pattern.m_numSubpatterns || m_pattern.m_containsModifiers)
+            return false;
+        auto& alternatives = m_pattern.m_body->m_alternatives;
+        if (alternatives.size() != 2 || alternatives[0]->m_terms.size() != 1 || alternatives[1]->m_terms.size() != 2)
+            return false;
+        auto& characterClass = alternatives[0]->m_terms[0];
+        auto& character = alternatives[1]->m_terms[0];
+        auto& assertion = alternatives[1]->m_terms[1];
+        if (characterClass.type != PatternTerm::Type::CharacterClass || characterClass.quantityType != QuantifierType::FixedCount
+            || characterClass.quantityMaxCount != 1 || characterClass.matchDirection() != Forward
+            || character.type != PatternTerm::Type::PatternCharacter || !U_IS_BMP(character.patternCharacter)
+            || character.quantityType != QuantifierType::FixedCount || character.quantityMaxCount != 1
+            || character.matchDirection() != Forward || assertion.type != PatternTerm::Type::ParentheticalAssertion
+            || assertion.invert() || assertion.containsAnyCaptures() || assertion.matchDirection() != Forward
+            || assertion.quantityType != QuantifierType::FixedCount || assertion.quantityMaxCount != 1)
+            return false;
+        auto& lookahead = assertion.parentheses.disjunction->m_alternatives;
+        if (lookahead.size() != 1 || lookahead[0]->m_terms.size() != 1)
+            return false;
+        auto& follower = lookahead[0]->m_terms[0];
+        if (follower.type != PatternTerm::Type::PatternCharacter || !U_IS_BMP(follower.patternCharacter)
+            || follower.quantityType != QuantifierType::FixedCount || follower.quantityMaxCount != 1
+            || follower.matchDirection() != Forward)
+            return false;
+        ByteTerm result(ByteTerm::Type::CharacterClassOrLiteralLookahead, characterClass.m_currentFlags, characterClass.invert());
+        result.classOrLookahead.characterClass = characterClass.characterClass;
+        result.classOrLookahead.character = character.patternCharacter;
+        result.classOrLookahead.lookaheadCharacter = follower.patternCharacter;
+        result.frameLocation = 1;
+        m_bodyDisjunction->terms.append(result);
+        return true;
     }
 
     BytecodePattern::SpecificPattern extractSpacesPattern()

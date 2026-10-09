@@ -86,6 +86,11 @@ struct ByteTerm {
             uint16_t masks[4];
             unsigned length;
         } literal16;
+        struct {
+            const CharacterClass* characterClass;
+            char32_t character;
+            char32_t lookaheadCharacter;
+        } classOrLookahead;
         unsigned checkInputCount;
     };
     unsigned frameLocation { 0 };
@@ -140,6 +145,7 @@ struct ByteTerm {
         CheckInputBOLCharacter,
         CheckInputBOLLiteral,
         CharacterClassWithNegativeAssertion,
+        CharacterClassOrLiteralLookahead,
     };
     Type type;
     OptionSet<Flags> m_flags;
@@ -495,6 +501,7 @@ struct ByteTerm {
 
 static_assert(sizeof(ByteTerm::literal) <= sizeof(ByteTerm::atom), "Literal terms must fit the existing bytecode payload");
 static_assert(sizeof(ByteTerm::literal16) <= sizeof(ByteTerm::atom), "UTF-16 literal terms must fit the existing bytecode payload");
+static_assert(sizeof(ByteTerm::classOrLookahead) <= sizeof(ByteTerm::atom), "Compound class terms must fit the existing bytecode payload");
 
 class ByteDisjunction {
     WTF_MAKE_TZONE_ALLOCATED(ByteDisjunction);
