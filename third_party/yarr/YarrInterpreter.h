@@ -59,6 +59,8 @@ struct ByteTerm {
             };
             union {
                 ByteDisjunction* parenthesesDisjunction;
+                // Non-null for compound character-class instructions.
+                const CharacterClass* secondaryCharacterClass;
                 unsigned parenthesesWidth;
             };
             QuantifierType quantityType;
@@ -117,6 +119,7 @@ struct ByteTerm {
         PatternCasedCharacterGreedy,
         PatternCasedCharacterNonGreedy,
         CharacterClass,
+        CharacterClassGreedyWithPrefix,
         CapturedCharacterClass,
         CheckInputCapturedCharacterClass,
         BackReference,
@@ -420,7 +423,8 @@ struct ByteTerm {
 
     bool isCharacterClass()
     {
-        return type == Type::CharacterClass || type == Type::CapturedCharacterClass
+        return type == Type::CharacterClass || type == Type::CharacterClassGreedyWithPrefix
+            || type == Type::CapturedCharacterClass
             || type == Type::CheckInputCapturedCharacterClass;
     }
 

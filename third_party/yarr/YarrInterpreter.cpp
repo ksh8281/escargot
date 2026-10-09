@@ -959,7 +959,7 @@ public:
 
     bool matchCharacterClass(ByteTerm& term, DisjunctionContext* context)
     {
-        ASSERT(term.type == ByteTerm::Type::CharacterClass);
+        ASSERT(term.type == ByteTerm::Type::CharacterClass || term.type == ByteTerm::Type::CharacterClassGreedyWithPrefix);
         BackTrackInfoCharacterClass* backTrack = reinterpret_cast<BackTrackInfoCharacterClass*>(context->frame + term.frameLocation);
 
         switch (term.atom.quantityType) {
@@ -1069,7 +1069,7 @@ public:
 
     bool backtrackCharacterClass(ByteTerm& term, DisjunctionContext* context)
     {
-        ASSERT(term.type == ByteTerm::Type::CharacterClass);
+        ASSERT(term.type == ByteTerm::Type::CharacterClass || term.type == ByteTerm::Type::CharacterClassGreedyWithPrefix);
         BackTrackInfoCharacterClass* backTrack = reinterpret_cast<BackTrackInfoCharacterClass*>(context->frame + term.frameLocation);
 
         switch (term.atom.quantityType) {
@@ -2137,6 +2137,28 @@ public:
             }
         }
 
+        case ByteTerm::Type::CharacterClassGreedyWithPrefix: {
+            // The prefix was included in the enclosing input check. Only the
+            // variable suffix contributes to the greedy backtracking amount.
+            for (unsigned i = 0; i < currentTerm().atom.quantityMinCount; ++i) {
+                if (!checkCharacterClass(currentTerm(), currentTerm().inputPosition + currentTerm().atom.quantityMinCount - i))
+                    BACKTRACK();
+            }
+            unsigned position = input.getPos();
+            unsigned matchAmount = 0;
+            while (matchAmount < currentTerm().atom.quantityMaxCount && input.checkInput(1)) {
+                char32_t ch = input.readChecked(currentTerm().inputPosition + 1);
+                if (ch == errorCodePoint || testCharacterClass(currentTerm().atom.secondaryCharacterClass, ch) == currentTerm().invert()) {
+                    input.setPos(position);
+                    break;
+                }
+                ++matchAmount;
+                position = input.getPos();
+            }
+            auto* backTrack = reinterpret_cast<BackTrackInfoCharacterClass*>(context->frame + currentTerm().frameLocation);
+            backTrack->matchAmount = matchAmount;
+            MATCH_NEXT();
+        }
         case ByteTerm::Type::CharacterClass:
             DUMP_CURR_CHAR();
             if (matchCharacterClass(currentTerm(), context))
@@ -2328,6 +2350,7 @@ public:
             if (backtrackPatternCasedCharacter(currentTerm(), context))
                 MATCH_NEXT();
             BACKTRACK();
+        case ByteTerm::Type::CharacterClassGreedyWithPrefix:
         case ByteTerm::Type::CharacterClass:
             if (backtrackCharacterClass(currentTerm(), context))
                 MATCH_NEXT();
@@ -3260,14 +3283,30 @@ public:
 
     void atomCharacterClass(const CharacterClass* characterClass, bool invert, MatchDirection matchDirection, unsigned inputPosition, unsigned frameLocation, Checked<unsigned> quantityMaxCount, QuantifierType quantityType, OptionSet<Flags> flags)
     {
-        m_bodyDisjunction->terms.append(ByteTerm(characterClass, invert, inputPosition, flags));
-
+        ByteTerm term(characterClass, invert, inputPosition, flags);
         if (quantityType != QuantifierType::FixedCount)
-            m_bodyDisjunction->terms.last().atom.quantityMinCount = 0;
-        m_bodyDisjunction->terms.last().atom.quantityMaxCount = quantityMaxCount;
-        m_bodyDisjunction->terms.last().atom.quantityType = quantityType;
-        m_bodyDisjunction->terms.last().frameLocation = frameLocation;
-        m_bodyDisjunction->terms.last().m_matchDirection = matchDirection;
+            term.atom.quantityMinCount = 0;
+        term.atom.quantityMaxCount = quantityMaxCount;
+        term.atom.quantityType = quantityType;
+        term.frameLocation = frameLocation;
+        term.m_matchDirection = matchDirection;
+
+        if (!m_pattern.eitherUnicode() && matchDirection == Forward && quantityType == QuantifierType::Greedy
+            && !m_bodyDisjunction->terms.isEmpty()) {
+            auto& previous = m_bodyDisjunction->terms.last();
+            if (previous.type == ByteTerm::Type::CharacterClass && previous.matchDirection() == Forward
+                && previous.atom.quantityType == QuantifierType::FixedCount && previous.atom.quantityMaxCount
+                && previous.invert() == invert && previous.m_flags == flags
+                && previous.inputPosition >= inputPosition && previous.inputPosition - inputPosition == previous.atom.quantityMaxCount) {
+                term.type = ByteTerm::Type::CharacterClassGreedyWithPrefix;
+                term.atom.quantityMinCount = previous.atom.quantityMaxCount;
+                term.atom.secondaryCharacterClass = characterClass;
+                term.atom.characterClass = previous.atom.characterClass;
+                previous = term;
+                return;
+            }
+        }
+        m_bodyDisjunction->terms.append(term);
     }
 
     void atomBackReference(unsigned subpatternId, MatchDirection matchDirection, unsigned inputPosition, unsigned frameLocation, Checked<unsigned> quantityMaxCount, QuantifierType quantityType, OptionSet<Flags> flags)
