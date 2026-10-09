@@ -538,6 +538,9 @@ public:
         m_userCharacterClasses.swap(pattern.m_userCharacterClasses);
         m_userCharacterClasses.shrinkToFit();
 
+        for (auto& characterClass : m_userCharacterClasses)
+            characterClass->initializeLatin1Bitmap();
+
         m_numDuplicateNamedCaptureGroups = pattern.m_numDuplicateNamedCaptureGroups;
     }
 

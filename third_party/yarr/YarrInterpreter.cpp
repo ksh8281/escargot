@@ -500,6 +500,9 @@ public:
         if (characterClass->m_anyCharacter)
             return true;
 
+        if (ch <= 0xff && characterClass->m_hasLatin1Bitmap)
+            return characterClass->m_latin1Bitmap[ch >> 5] & (1u << (ch & 31));
+
         const size_t thresholdForBinarySearch = 6;
 
         if (!isASCII(ch)) {

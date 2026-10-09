@@ -125,6 +125,7 @@ public:
     }
 
     void copyOnly8BitCharacterData(const CharacterClass& other);
+    void initializeLatin1Bitmap();
 
     bool hasNonBMPCharacters() const { return m_characterWidths & CharacterClassWidths::HasNonBMPChars; }
 
@@ -144,6 +145,9 @@ public:
     bool m_tableInverted : 1;
     bool m_anyCharacter : 1;
     bool m_inCanonicalForm : 1;
+    // Keep word alignment on ARM32, including GC allocations.
+    uint32_t m_latin1Bitmap[8] { };
+    bool m_hasLatin1Bitmap { false };
 };
 
 struct ClassSet : public CharacterClass {

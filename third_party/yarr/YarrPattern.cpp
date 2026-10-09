@@ -2282,9 +2282,39 @@ std::unique_ptr<CharacterClass> anycharCreate()
     return characterClass;
 }
 
+void CharacterClass::initializeLatin1Bitmap()
+{
+    if (m_hasLatin1Bitmap)
+        return;
+    memset(m_latin1Bitmap, 0, sizeof(m_latin1Bitmap));
+    auto add = [this](char32_t ch) {
+        m_latin1Bitmap[ch >> 5] |= 1u << (ch & 31);
+    };
+    // Mirror the interpreter's ASCII / non-ASCII split, including classes
+    // produced by set operations and case folding.
+    for (auto ch : m_matches) {
+        if (ch < 0x80)
+            add(ch);
+    }
+    for (auto range : m_ranges) {
+        for (char32_t ch = range.begin; ch <= std::min<char32_t>(range.end, 0x7f); ++ch)
+            add(ch);
+    }
+    for (auto ch : m_matchesUnicode) {
+        if (ch >= 0x80 && ch <= 0xff)
+            add(ch);
+    }
+    for (auto range : m_rangesUnicode) {
+        for (char32_t ch = std::max<char32_t>(range.begin, 0x80); ch <= std::min<char32_t>(range.end, 0xff); ++ch)
+            add(ch);
+    }
+    m_hasLatin1Bitmap = true;
+}
+
 void CharacterClass::copyOnly8BitCharacterData(const CharacterClass& other)
 {
     RELEASE_ASSERT(!m_table);
+    m_hasLatin1Bitmap = false;
 
     m_strings.clear();
     m_matches.clear();
