@@ -74,6 +74,11 @@ struct ByteTerm {
             bool m_bol : 1;
             bool m_eol : 1;
         } anchors;
+        struct {
+            uint8_t characters[8];
+            uint8_t masks[8];
+            unsigned length;
+        } literal;
         unsigned checkInputCount;
     };
     unsigned frameLocation { 0 };
@@ -94,6 +99,7 @@ struct ByteTerm {
         PatternCharacterFixed,
         PatternCharacterGreedy,
         PatternCharacterNonGreedy,
+        PatternLiteral,
         // Cased Characeter Types
         PatternCasedCharacterOnce,
         PatternCasedCharacterFixed,

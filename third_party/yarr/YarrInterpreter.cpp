@@ -426,6 +426,33 @@ public:
             return (static_cast<size_t>(current - input) >= offset) && ((current - offset) < inputEnd);
         }
 
+        bool matchesLiteral(const ByteTerm& term)
+        {
+            ASSERT(!decodeSurrogatePairs);
+            ASSERT(static_cast<size_t>(current - input) >= term.inputPosition);
+            const CharType* chars = current - term.inputPosition;
+            unsigned length = term.literal.length;
+            ASSERT(length <= static_cast<size_t>(inputEnd - chars));
+            unsigned i = 0;
+            if (sizeof(CharType) == 1) {
+                // memcpy permits unaligned subjects on ARM32 and never reads
+                // beyond the checked literal, unlike a rounded-up word load.
+                for (; i + sizeof(uint32_t) <= length; i += sizeof(uint32_t)) {
+                    uint32_t actual, expected, mask;
+                    memcpy(&actual, chars + i, sizeof(actual));
+                    memcpy(&expected, term.literal.characters + i, sizeof(expected));
+                    memcpy(&mask, term.literal.masks + i, sizeof(mask));
+                    if ((actual | mask) != expected)
+                        return false;
+                }
+            }
+            for (; i < length; ++i) {
+                if ((chars[i] | term.literal.masks[i]) != term.literal.characters[i])
+                    return false;
+            }
+            return true;
+        }
+
         void dump(PrintStream& out) const
         {
         }
@@ -1807,6 +1834,10 @@ public:
                 MATCH_NEXT();
             BACKTRACK();
 
+        case ByteTerm::Type::PatternLiteral:
+            if (input.matchesLiteral(currentTerm()))
+                MATCH_NEXT();
+            BACKTRACK();
         case ByteTerm::Type::PatternCharacterOnce:
         case ByteTerm::Type::PatternCharacterFixed: {
             DUMP_CURR_CHAR();
@@ -2134,6 +2165,7 @@ public:
         case ByteTerm::Type::AssertionBOL:
         case ByteTerm::Type::AssertionEOL:
         case ByteTerm::Type::AssertionWordBoundary:
+        case ByteTerm::Type::PatternLiteral:
             BACKTRACK();
 
         case ByteTerm::Type::PatternCharacterOnce:
@@ -2622,6 +2654,53 @@ public:
         m_bodyDisjunction->terms.append(ByteTerm::WordBoundary(invert, matchDirection, inputPosition, flags));
     }
 
+    void appendPatternCharacter(ByteTerm term)
+    {
+        // Fuse during emission, before alternative/parentheses jump offsets
+        // are finalized. Captures, assertions and variable quantifiers end a
+        // run; the fused term needs no backtracking state of its own.
+        auto latin1Character = [](const ByteTerm& candidate, uint8_t& character, uint8_t& mask) {
+            mask = 0;
+            if (candidate.type == ByteTerm::Type::PatternCharacterOnce && candidate.atom.patternCharacter <= 0xff) {
+                character = candidate.atom.patternCharacter;
+                return true;
+            }
+            if (candidate.type == ByteTerm::Type::PatternCasedCharacterOnce) {
+                char32_t lo = candidate.atom.casedCharacter.lo;
+                char32_t hi = candidate.atom.casedCharacter.hi;
+                if (isASCIIAlpha(lo) && (lo ^ hi) == 0x20) {
+                    mask = 0x20;
+                    character = lo | mask;
+                    return true;
+                }
+            }
+            return false;
+        };
+
+        uint8_t character, mask;
+        if (!m_pattern.eitherUnicode() && term.matchDirection() == Forward && latin1Character(term, character, mask) && !m_bodyDisjunction->terms.isEmpty()) {
+            auto& previous = m_bodyDisjunction->terms.last();
+            if (previous.matchDirection() == Forward) {
+                uint8_t previousCharacter, previousMask;
+                if (latin1Character(previous, previousCharacter, previousMask) && previous.inputPosition == term.inputPosition + 1) {
+                    previous.type = ByteTerm::Type::PatternLiteral;
+                    memset(&previous.literal, 0, sizeof(previous.literal));
+                    previous.literal.characters[0] = previousCharacter;
+                    previous.literal.masks[0] = previousMask;
+                    previous.literal.length = 1;
+                }
+                if (previous.type == ByteTerm::Type::PatternLiteral && previous.literal.length < sizeof(previous.literal.characters)
+                    && previous.inputPosition == term.inputPosition + previous.literal.length) {
+                    unsigned i = previous.literal.length++;
+                    previous.literal.characters[i] = character;
+                    previous.literal.masks[i] = mask;
+                    return;
+                }
+            }
+        }
+        m_bodyDisjunction->terms.append(term);
+    }
+
     void atomPatternCharacter(char32_t ch, MatchDirection matchDirection, unsigned inputPosition, unsigned frameLocation, Checked<unsigned> quantityMaxCount, QuantifierType quantityType, OptionSet<Flags> flags)
     {
         if (flags.contains(Flags::IgnoreCase)) {
@@ -2649,14 +2728,16 @@ public:
 #endif
 
             if (lo != hi) {
-                m_bodyDisjunction->terms.append(ByteTerm(lo, hi, inputPosition, frameLocation, quantityMaxCount, quantityType, flags));
-                m_bodyDisjunction->terms.last().m_matchDirection = matchDirection;
+                ByteTerm term(lo, hi, inputPosition, frameLocation, quantityMaxCount, quantityType, flags);
+                term.m_matchDirection = matchDirection;
+                appendPatternCharacter(term);
                 return;
             }
         }
 
-        m_bodyDisjunction->terms.append(ByteTerm(ch, inputPosition, frameLocation, quantityMaxCount, quantityType, flags));
-        m_bodyDisjunction->terms.last().m_matchDirection = matchDirection;
+        ByteTerm term(ch, inputPosition, frameLocation, quantityMaxCount, quantityType, flags);
+        term.m_matchDirection = matchDirection;
+        appendPatternCharacter(term);
     }
 
     void atomCharacterClass(CharacterClass* characterClass, bool invert, MatchDirection matchDirection, unsigned inputPosition, unsigned frameLocation, Checked<unsigned> quantityMaxCount, QuantifierType quantityType, OptionSet<Flags> flags)
