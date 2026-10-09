@@ -440,7 +440,6 @@ public:
 
         bool matchesLiteral(const ByteTerm& term)
         {
-            ASSERT(!decodeSurrogatePairs);
             ASSERT(static_cast<size_t>(current - input) >= term.inputPosition);
             const CharType* chars = current - term.inputPosition;
             unsigned length = term.literal.length;
@@ -460,6 +459,30 @@ public:
             }
             for (; i < length; ++i) {
                 if ((chars[i] | term.literal.masks[i]) != term.literal.characters[i])
+                    return false;
+            }
+            return true;
+        }
+
+        bool matchesLiteral16(const ByteTerm& term)
+        {
+            ASSERT(static_cast<size_t>(current - input) >= term.inputPosition);
+            const CharType* chars = current - term.inputPosition;
+            unsigned length = term.literal16.length;
+            ASSERT(length <= static_cast<size_t>(inputEnd - chars));
+            unsigned i = 0;
+            if (sizeof(CharType) == 2) {
+                for (; i + 2 <= length; i += 2) {
+                    uint32_t actual, expected, mask;
+                    memcpy(&actual, chars + i, sizeof(actual));
+                    memcpy(&expected, term.literal16.characters + i, sizeof(expected));
+                    memcpy(&mask, term.literal16.masks + i, sizeof(mask));
+                    if ((actual | mask) != expected)
+                        return false;
+                }
+            }
+            for (; i < length; ++i) {
+                if ((chars[i] | term.literal16.masks[i]) != term.literal16.characters[i])
                     return false;
             }
             return true;
@@ -1909,6 +1932,10 @@ public:
             if (input.matchesLiteral(currentTerm()))
                 MATCH_NEXT();
             BACKTRACK();
+        case ByteTerm::Type::PatternLiteral16:
+            if (input.matchesLiteral16(currentTerm()))
+                MATCH_NEXT();
+            BACKTRACK();
         case ByteTerm::Type::PatternCharacterOnce:
         case ByteTerm::Type::PatternCharacterFixed: {
             DUMP_CURR_CHAR();
@@ -2237,6 +2264,7 @@ public:
         case ByteTerm::Type::AssertionEOL:
         case ByteTerm::Type::AssertionWordBoundary:
         case ByteTerm::Type::PatternLiteral:
+        case ByteTerm::Type::PatternLiteral16:
             BACKTRACK();
 
         case ByteTerm::Type::PatternCharacterOnce:
@@ -3030,12 +3058,13 @@ public:
 
     void appendPatternCharacter(ByteTerm term)
     {
-        // Fuse during emission, before alternative/parentheses jump offsets
-        // are finalized. Captures, assertions and variable quantifiers end a
-        // run; the fused term needs no backtracking state of its own.
-        auto latin1Character = [](const ByteTerm& candidate, uint8_t& character, uint8_t& mask) {
+        // Fuse before control-flow offsets are finalized. Fixed BMP literals
+        // consume one code unit in every mode; Unicode surrogate literals and
+        // backward matching keep the scalar path.
+        auto literalCharacter = [this](const ByteTerm& candidate, uint16_t& character, uint16_t& mask) {
             mask = 0;
-            if (candidate.type == ByteTerm::Type::PatternCharacterOnce && candidate.atom.patternCharacter <= 0xff) {
+            if (candidate.type == ByteTerm::Type::PatternCharacterOnce && U_IS_BMP(candidate.atom.patternCharacter)
+                && (!m_pattern.eitherUnicode() || !U_IS_SURROGATE(candidate.atom.patternCharacter))) {
                 character = candidate.atom.patternCharacter;
                 return true;
             }
@@ -3051,23 +3080,51 @@ public:
             return false;
         };
 
-        uint8_t character, mask;
-        if (!m_pattern.eitherUnicode() && term.matchDirection() == Forward && latin1Character(term, character, mask) && !m_bodyDisjunction->terms.isEmpty()) {
+        uint16_t character, mask;
+        if (term.matchDirection() == Forward && literalCharacter(term, character, mask) && !m_bodyDisjunction->terms.isEmpty()) {
             auto& previous = m_bodyDisjunction->terms.last();
             if (previous.matchDirection() == Forward) {
-                uint8_t previousCharacter, previousMask;
-                if (latin1Character(previous, previousCharacter, previousMask) && previous.inputPosition == term.inputPosition + 1) {
-                    previous.type = ByteTerm::Type::PatternLiteral;
+                uint16_t previousCharacter, previousMask;
+                if (literalCharacter(previous, previousCharacter, previousMask) && previous.inputPosition == term.inputPosition + 1) {
+                    bool latin1 = previousCharacter <= 0xff && character <= 0xff;
+                    previous.type = latin1 ? ByteTerm::Type::PatternLiteral : ByteTerm::Type::PatternLiteral16;
                     memset(&previous.literal, 0, sizeof(previous.literal));
-                    previous.literal.characters[0] = previousCharacter;
-                    previous.literal.masks[0] = previousMask;
-                    previous.literal.length = 1;
+                    if (latin1) {
+                        previous.literal.characters[0] = previousCharacter;
+                        previous.literal.masks[0] = previousMask;
+                        previous.literal.length = 1;
+                    } else {
+                        previous.literal16.characters[0] = previousCharacter;
+                        previous.literal16.masks[0] = previousMask;
+                        previous.literal16.length = 1;
+                    }
                 }
-                if (previous.type == ByteTerm::Type::PatternLiteral && previous.literal.length < sizeof(previous.literal.characters)
+                if (previous.type == ByteTerm::Type::PatternLiteral && character > 0xff
+                    && previous.literal.length < 4 && previous.inputPosition == term.inputPosition + previous.literal.length) {
+                    unsigned length = previous.literal.length;
+                    uint16_t characters[4] { }, masks[4] { };
+                    for (unsigned i = 0; i < length; ++i) {
+                        characters[i] = previous.literal.characters[i];
+                        masks[i] = previous.literal.masks[i];
+                    }
+                    previous.type = ByteTerm::Type::PatternLiteral16;
+                    memcpy(previous.literal16.characters, characters, sizeof(characters));
+                    memcpy(previous.literal16.masks, masks, sizeof(masks));
+                    previous.literal16.length = length;
+                }
+                if (previous.type == ByteTerm::Type::PatternLiteral && character <= 0xff
+                    && previous.literal.length < sizeof(previous.literal.characters)
                     && previous.inputPosition == term.inputPosition + previous.literal.length) {
                     unsigned i = previous.literal.length++;
                     previous.literal.characters[i] = character;
                     previous.literal.masks[i] = mask;
+                    return;
+                }
+                if (previous.type == ByteTerm::Type::PatternLiteral16 && previous.literal16.length < 4
+                    && previous.inputPosition == term.inputPosition + previous.literal16.length) {
+                    unsigned i = previous.literal16.length++;
+                    previous.literal16.characters[i] = character;
+                    previous.literal16.masks[i] = mask;
                     return;
                 }
             }

@@ -79,6 +79,11 @@ struct ByteTerm {
             uint8_t masks[8];
             unsigned length;
         } literal;
+        struct {
+            uint16_t characters[4];
+            uint16_t masks[4];
+            unsigned length;
+        } literal16;
         unsigned checkInputCount;
     };
     unsigned frameLocation { 0 };
@@ -100,6 +105,7 @@ struct ByteTerm {
         PatternCharacterGreedy,
         PatternCharacterNonGreedy,
         PatternLiteral,
+        PatternLiteral16,
         // Cased Characeter Types
         PatternCasedCharacterOnce,
         PatternCasedCharacterFixed,
@@ -466,6 +472,9 @@ struct ByteTerm {
         return m_flags.contains(Flags::DotAll);
     }
 };
+
+static_assert(sizeof(ByteTerm::literal) <= sizeof(ByteTerm::atom), "Literal terms must fit the existing bytecode payload");
+static_assert(sizeof(ByteTerm::literal16) <= sizeof(ByteTerm::atom), "UTF-16 literal terms must fit the existing bytecode payload");
 
 class ByteDisjunction {
     WTF_MAKE_TZONE_ALLOCATED(ByteDisjunction);
