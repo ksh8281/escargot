@@ -134,6 +134,11 @@ struct ByteTerm {
         UncheckInput,
         HaveCheckedInput,
         DotStarEnclosure,
+        CheckInputBOL,
+        CheckInputCharacterClass,
+        CheckInputBOLCharacterClass,
+        CheckInputBOLCharacter,
+        CheckInputBOLLiteral,
     };
     Type type;
     OptionSet<Flags> m_flags;
@@ -425,7 +430,8 @@ struct ByteTerm {
     {
         return type == Type::CharacterClass || type == Type::CharacterClassGreedyWithPrefix
             || type == Type::CapturedCharacterClass
-            || type == Type::CheckInputCapturedCharacterClass;
+            || type == Type::CheckInputCapturedCharacterClass
+            || type == Type::CheckInputCharacterClass || type == Type::CheckInputBOLCharacterClass;
     }
 
     bool containsAnyCaptures()

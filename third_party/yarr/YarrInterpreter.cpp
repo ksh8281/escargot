@@ -1915,6 +1915,42 @@ public:
             if (matchAssertionBOL(currentTerm()))
                 MATCH_NEXT();
             BACKTRACK();
+        case ByteTerm::Type::CheckInputBOL:
+            if (!input.checkInput(currentTerm().frameLocation))
+                BACKTRACK();
+            if (matchAssertionBOL(currentTerm()))
+                MATCH_NEXT();
+            input.uncheckInput(currentTerm().frameLocation);
+            BACKTRACK();
+        case ByteTerm::Type::CheckInputBOLCharacter:
+            if (!input.checkInput(currentTerm().frameLocation))
+                BACKTRACK();
+            if (matchAssertionBOL(currentTerm())
+                && (input.readCheckedDontAdvance(currentTerm().inputPosition) | currentTerm().literal.masks[0]) == currentTerm().literal.characters[0])
+                MATCH_NEXT();
+            input.uncheckInput(currentTerm().frameLocation);
+            BACKTRACK();
+        case ByteTerm::Type::CheckInputBOLLiteral:
+            if (!input.checkInput(currentTerm().frameLocation))
+                BACKTRACK();
+            if (matchAssertionBOL(currentTerm()) && input.matchesLiteral(currentTerm()))
+                MATCH_NEXT();
+            input.uncheckInput(currentTerm().frameLocation);
+            BACKTRACK();
+        case ByteTerm::Type::CheckInputCharacterClass:
+            if (!input.checkInput(currentTerm().frameLocation))
+                BACKTRACK();
+            if (checkCharacterClass(currentTerm(), currentTerm().inputPosition))
+                MATCH_NEXT();
+            input.uncheckInput(currentTerm().frameLocation);
+            BACKTRACK();
+        case ByteTerm::Type::CheckInputBOLCharacterClass:
+            if (!input.checkInput(currentTerm().frameLocation))
+                BACKTRACK();
+            if (matchAssertionBOL(currentTerm()) && checkCharacterClass(currentTerm(), currentTerm().inputPosition))
+                MATCH_NEXT();
+            input.uncheckInput(currentTerm().frameLocation);
+            BACKTRACK();
         case ByteTerm::Type::AssertionEOL:
             if (matchAssertionEOL(currentTerm()))
                 MATCH_NEXT();
@@ -2333,6 +2369,11 @@ public:
         case ByteTerm::Type::CheckInputLiteral16:
         case ByteTerm::Type::CheckInputCharacter:
         case ByteTerm::Type::CheckInputCharacter16:
+        case ByteTerm::Type::CheckInputBOL:
+        case ByteTerm::Type::CheckInputBOLCharacter:
+        case ByteTerm::Type::CheckInputBOLLiteral:
+        case ByteTerm::Type::CheckInputCharacterClass:
+        case ByteTerm::Type::CheckInputBOLCharacterClass:
             input.uncheckInput(currentTerm().frameLocation);
             BACKTRACK();
 
@@ -3130,7 +3171,15 @@ public:
 
     void assertionBOL(unsigned inputPosition, OptionSet<Flags> flags)
     {
-        m_bodyDisjunction->terms.append(ByteTerm::BOL(inputPosition, flags));
+        ByteTerm term = ByteTerm::BOL(inputPosition, flags);
+        if (!m_pattern.eitherUnicode() && !m_bodyDisjunction->terms.isEmpty()
+            && m_bodyDisjunction->terms.last().type == ByteTerm::Type::CheckInput) {
+            term.type = ByteTerm::Type::CheckInputBOL;
+            term.frameLocation = m_bodyDisjunction->terms.last().checkInputCount;
+            m_bodyDisjunction->terms.last() = term;
+            return;
+        }
+        m_bodyDisjunction->terms.append(term);
     }
 
     void assertionEOL(unsigned inputPosition, OptionSet<Flags> flags)
@@ -3170,6 +3219,18 @@ public:
         uint16_t character, mask;
         if (term.matchDirection() == Forward && literalCharacter(term, character, mask) && !m_bodyDisjunction->terms.isEmpty()) {
             auto& previous = m_bodyDisjunction->terms.last();
+            if (previous.type == ByteTerm::Type::CheckInputBOL && character <= 0xff
+                && previous.inputPosition == term.inputPosition && previous.m_flags == term.m_flags) {
+                unsigned count = previous.frameLocation;
+                previous = term;
+                previous.type = ByteTerm::Type::CheckInputBOLCharacter;
+                previous.frameLocation = count;
+                memset(&previous.literal, 0, sizeof(previous.literal));
+                previous.literal.characters[0] = character;
+                previous.literal.masks[0] = mask;
+                previous.literal.length = 1;
+                return;
+            }
             if (previous.type == ByteTerm::Type::CheckInput) {
                 unsigned count = previous.checkInputCount;
                 previous = term;
@@ -3189,6 +3250,15 @@ public:
                 return;
             }
             if (previous.matchDirection() == Forward) {
+                if ((previous.type == ByteTerm::Type::CheckInputBOLCharacter || previous.type == ByteTerm::Type::CheckInputBOLLiteral)
+                    && character <= 0xff && previous.literal.length < sizeof(previous.literal.characters)
+                    && previous.inputPosition == term.inputPosition + previous.literal.length) {
+                    previous.type = ByteTerm::Type::CheckInputBOLLiteral;
+                    unsigned i = previous.literal.length++;
+                    previous.literal.characters[i] = character;
+                    previous.literal.masks[i] = mask;
+                    return;
+                }
                 if (previous.type == ByteTerm::Type::CheckInputCharacter)
                     previous.type = ByteTerm::Type::CheckInputLiteral;
                 if (previous.type == ByteTerm::Type::CheckInputCharacter16)
@@ -3281,7 +3351,7 @@ public:
         appendPatternCharacter(term);
     }
 
-    void atomCharacterClass(const CharacterClass* characterClass, bool invert, MatchDirection matchDirection, unsigned inputPosition, unsigned frameLocation, Checked<unsigned> quantityMaxCount, QuantifierType quantityType, OptionSet<Flags> flags)
+    void atomCharacterClass(const CharacterClass* characterClass, bool invert, MatchDirection matchDirection, unsigned inputPosition, unsigned frameLocation, Checked<unsigned> quantityMaxCount, QuantifierType quantityType, OptionSet<Flags> flags, bool fuseInputCheck = true)
     {
         ByteTerm term(characterClass, invert, inputPosition, flags);
         if (quantityType != QuantifierType::FixedCount)
@@ -3291,6 +3361,22 @@ public:
         term.frameLocation = frameLocation;
         term.m_matchDirection = matchDirection;
 
+        if (fuseInputCheck && !m_pattern.eitherUnicode() && matchDirection == Forward
+            && quantityType == QuantifierType::FixedCount && quantityMaxCount == 1 && !m_bodyDisjunction->terms.isEmpty()) {
+            auto& previous = m_bodyDisjunction->terms.last();
+            if (previous.type == ByteTerm::Type::CheckInput) {
+                term.type = ByteTerm::Type::CheckInputCharacterClass;
+                term.frameLocation = previous.checkInputCount;
+                previous = term;
+                return;
+            }
+            if (previous.type == ByteTerm::Type::CheckInputBOL && previous.inputPosition == inputPosition && previous.m_flags == flags) {
+                term.type = ByteTerm::Type::CheckInputBOLCharacterClass;
+                term.frameLocation = previous.frameLocation;
+                previous = term;
+                return;
+            }
+        }
         if (!m_pattern.eitherUnicode() && matchDirection == Forward && quantityType == QuantifierType::Greedy
             && !m_bodyDisjunction->terms.isEmpty()) {
             auto& previous = m_bodyDisjunction->terms.last();
@@ -3735,7 +3821,10 @@ public:
                     auto currentInputPosition = currentCountAlreadyChecked - term.inputPosition;
                     if (currentInputPosition.hasOverflowed())
                         return ErrorCode::OffsetTooLarge;
-                    atomCharacterClass(term.characterClass, term.invert(), matchDirection, currentInputPosition, term.frameLocation, term.quantityMaxCount, term.quantityType, term.m_currentFlags);
+                    bool followedByGreedyClass = matchDirection == Forward && termIndex + 1 < termCount
+                        && alternative->m_terms[termIndex + 1].type == PatternTerm::Type::CharacterClass
+                        && alternative->m_terms[termIndex + 1].quantityType == QuantifierType::Greedy;
+                    atomCharacterClass(term.characterClass, term.invert(), matchDirection, currentInputPosition, term.frameLocation, term.quantityMaxCount, term.quantityType, term.m_currentFlags, !followedByGreedyClass);
                     m_bodyDisjunction->terms.last().m_possessive = term.m_possessive;
                     break;
                 }
