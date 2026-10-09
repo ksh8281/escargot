@@ -139,6 +139,7 @@ struct ByteTerm {
         CheckInputBOLCharacterClass,
         CheckInputBOLCharacter,
         CheckInputBOLLiteral,
+        CharacterClassWithNegativeAssertion,
     };
     Type type;
     OptionSet<Flags> m_flags;
@@ -431,7 +432,8 @@ struct ByteTerm {
         return type == Type::CharacterClass || type == Type::CharacterClassGreedyWithPrefix
             || type == Type::CapturedCharacterClass
             || type == Type::CheckInputCapturedCharacterClass
-            || type == Type::CheckInputCharacterClass || type == Type::CheckInputBOLCharacterClass;
+            || type == Type::CheckInputCharacterClass || type == Type::CheckInputBOLCharacterClass
+            || type == Type::CharacterClassWithNegativeAssertion;
     }
 
     bool containsAnyCaptures()

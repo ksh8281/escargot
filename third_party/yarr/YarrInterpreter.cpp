@@ -683,6 +683,12 @@ public:
         if (inputChar == errorCodePoint)
             return false;
 
+        if (term.type == ByteTerm::Type::CharacterClassWithNegativeAssertion) {
+            ASSERT(!isEitherUnicodeCompilation() && term.matchDirection() == Forward);
+            return testCharacterClass(term.atom.characterClass, inputChar) != term.invert()
+                && !testCharacterClass(term.atom.secondaryCharacterClass, inputChar);
+        }
+
         bool match;
         // Escargot update for `built-ins/RegExp/regexp-modifiers/add-ignoreCase-affects-slash-upper-p.js`
         if (term.m_flags.contains(Flags::IgnoreCase) && term.m_flags.contains(Flags::Unicode)) {
@@ -959,7 +965,8 @@ public:
 
     bool matchCharacterClass(ByteTerm& term, DisjunctionContext* context)
     {
-        ASSERT(term.type == ByteTerm::Type::CharacterClass || term.type == ByteTerm::Type::CharacterClassGreedyWithPrefix);
+        ASSERT(term.type == ByteTerm::Type::CharacterClass || term.type == ByteTerm::Type::CharacterClassGreedyWithPrefix
+            || term.type == ByteTerm::Type::CharacterClassWithNegativeAssertion);
         BackTrackInfoCharacterClass* backTrack = reinterpret_cast<BackTrackInfoCharacterClass*>(context->frame + term.frameLocation);
 
         switch (term.atom.quantityType) {
@@ -1069,7 +1076,8 @@ public:
 
     bool backtrackCharacterClass(ByteTerm& term, DisjunctionContext* context)
     {
-        ASSERT(term.type == ByteTerm::Type::CharacterClass || term.type == ByteTerm::Type::CharacterClassGreedyWithPrefix);
+        ASSERT(term.type == ByteTerm::Type::CharacterClass || term.type == ByteTerm::Type::CharacterClassGreedyWithPrefix
+            || term.type == ByteTerm::Type::CharacterClassWithNegativeAssertion);
         BackTrackInfoCharacterClass* backTrack = reinterpret_cast<BackTrackInfoCharacterClass*>(context->frame + term.frameLocation);
 
         switch (term.atom.quantityType) {
@@ -2196,6 +2204,7 @@ public:
             MATCH_NEXT();
         }
         case ByteTerm::Type::CharacterClass:
+        case ByteTerm::Type::CharacterClassWithNegativeAssertion:
             DUMP_CURR_CHAR();
             if (matchCharacterClass(currentTerm(), context))
                 MATCH_NEXT();
@@ -2393,6 +2402,7 @@ public:
             BACKTRACK();
         case ByteTerm::Type::CharacterClassGreedyWithPrefix:
         case ByteTerm::Type::CharacterClass:
+        case ByteTerm::Type::CharacterClassWithNegativeAssertion:
             if (backtrackCharacterClass(currentTerm(), context))
                 MATCH_NEXT();
             BACKTRACK();
@@ -3192,6 +3202,46 @@ public:
         m_bodyDisjunction->terms.append(ByteTerm::WordBoundary(invert, matchDirection, inputPosition, flags));
     }
 
+    struct GuardedClassTerm {
+        const CharacterClass* guard;
+        const CharacterClass* characterClass;
+        bool invert;
+        OptionSet<Flags> flags;
+    };
+
+    std::optional<GuardedClassTerm> guardedClassFor(PatternTerm& parent)
+    {
+        if (m_pattern.eitherUnicode() || parent.matchDirection() != Forward || parent.capture()
+            || parent.containsAnyCaptures() || parent.parentheses.isTerminal || parent.m_possessive)
+            return std::nullopt;
+        bool fixedOnce = parent.quantityType == QuantifierType::FixedCount && parent.quantityMinCount == 1
+            && parent.quantityMaxCount == 1 && !parent.parentheses.isCopy;
+        bool greedy = parent.quantityType == QuantifierType::Greedy && !parent.quantityMinCount;
+        if (!fixedOnce && !greedy)
+            return std::nullopt;
+        auto& alternatives = parent.parentheses.disjunction->m_alternatives;
+        if (alternatives.size() != 1 || alternatives[0]->m_terms.size() != 2)
+            return std::nullopt;
+        auto& assertion = alternatives[0]->m_terms[0];
+        auto& consumer = alternatives[0]->m_terms[1];
+        if (assertion.type != PatternTerm::Type::ParentheticalAssertion || !assertion.invert()
+            || assertion.matchDirection() != Forward || assertion.containsAnyCaptures()
+            || assertion.quantityType != QuantifierType::FixedCount || assertion.quantityMaxCount != 1
+            || consumer.type != PatternTerm::Type::CharacterClass || consumer.matchDirection() != Forward
+            || consumer.quantityType != QuantifierType::FixedCount || consumer.quantityMaxCount != 1
+            || assertion.inputPosition != consumer.inputPosition)
+            return std::nullopt;
+        auto& guardAlternatives = assertion.parentheses.disjunction->m_alternatives;
+        if (guardAlternatives.size() != 1 || guardAlternatives[0]->m_terms.size() != 1)
+            return std::nullopt;
+        auto& guard = guardAlternatives[0]->m_terms[0];
+        if (guard.type != PatternTerm::Type::CharacterClass || guard.invert() || guard.matchDirection() != Forward
+            || guard.quantityType != QuantifierType::FixedCount || guard.quantityMaxCount != 1
+            || guard.m_currentFlags != consumer.m_currentFlags)
+            return std::nullopt;
+        return GuardedClassTerm { guard.characterClass, consumer.characterClass, consumer.invert(), consumer.m_currentFlags };
+    }
+
     void appendPatternCharacter(ByteTerm term)
     {
         // Fuse before control-flow offsets are finalized. Fixed BMP literals
@@ -3841,6 +3891,28 @@ public:
                     break;
 
                 case PatternTerm::Type::ParenthesesSubpattern: {
+                    if (matchDirection == Forward) {
+                        if (auto guarded = guardedClassFor(term)) {
+                            auto inputPosition = currentCountAlreadyChecked - term.inputPosition;
+                            if (inputPosition.hasOverflowed())
+                                return ErrorCode::OffsetTooLarge;
+                            // Fixed groups store their end offset; zero-minimum
+                            // variable groups store their start offset.
+                            if (term.quantityType == QuantifierType::FixedCount)
+                                inputPosition += 1;
+                            if (inputPosition.hasOverflowed())
+                                return ErrorCode::OffsetTooLarge;
+                            ByteTerm guardedTerm(guarded->characterClass, guarded->invert, inputPosition, guarded->flags);
+                            guardedTerm.type = ByteTerm::Type::CharacterClassWithNegativeAssertion;
+                            guardedTerm.atom.secondaryCharacterClass = guarded->guard;
+                            guardedTerm.atom.quantityMinCount = term.quantityType == QuantifierType::FixedCount ? 1 : 0;
+                            guardedTerm.atom.quantityMaxCount = term.quantityMaxCount;
+                            guardedTerm.atom.quantityType = term.quantityType;
+                            guardedTerm.frameLocation = term.frameLocation;
+                            m_bodyDisjunction->terms.append(guardedTerm);
+                            break;
+                        }
+                    }
                     unsigned disjunctionAlreadyCheckedCount = 0;
                     if (term.quantityMaxCount == 1 && !term.parentheses.isCopy) {
                         unsigned alternativeFrameLocation = term.frameLocation;
