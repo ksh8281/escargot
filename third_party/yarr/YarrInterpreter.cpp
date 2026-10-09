@@ -2345,6 +2345,32 @@ public:
         if (pattern->hasEndAnchoredFixedSize() && input.end() >= pattern->m_endAnchoredFixedSize)
             input.setPos(std::max(input.getPos(), input.end() - pattern->m_endAnchoredFixedSize));
 
+        using SpecificPattern = BytecodePattern::SpecificPattern;
+        if (pattern->m_specificPattern != SpecificPattern::None) {
+            auto type = pattern->m_specificPattern;
+            bool leading = type == SpecificPattern::LeadingSpacesStar || type == SpecificPattern::LeadingSpacesPlus;
+            bool requiresOne = type == SpecificPattern::LeadingSpacesPlus || type == SpecificPattern::TrailingSpacesPlus;
+            const auto* spaces = YarrPattern::spacesCharacterClass();
+            unsigned start = input.getPos();
+            unsigned end = input.end();
+            if (leading) {
+                if (start)
+                    return offsetNoMatch;
+                end = 0;
+                while (end < input.end() && testCharacterClass(spaces, input.peek(end)))
+                    ++end;
+            } else {
+                start = end;
+                while (start > input.getPos() && testCharacterClass(spaces, input.peek(start - input.getPos() - 1)))
+                    --start;
+            }
+            if (requiresOne && start == end)
+                return offsetNoMatch;
+            output[0] = start;
+            output[1] = end;
+            return start;
+        }
+
 #if defined(ENABLE_YARR_START_CHAR_FILTER)
         if (pattern->m_fixedPrefixSearch && !pattern->m_fixedPrefixSearch.value()->atom.isEmpty()) {
             const auto& atom = pattern->m_fixedPrefixSearch.value()->atom;
@@ -2802,6 +2828,7 @@ public:
         regexEnd();
 
         auto bytecodePattern = makeUnique<BytecodePattern>(WTFMove(m_bodyDisjunction), m_allParenthesesInfo, m_pattern, allocator, m_pattern.offsetVectorBaseForNamedCaptures(), m_pattern.offsetsSize());
+        bytecodePattern->m_specificPattern = extractSpacesPattern();
 
 #if defined(ENABLE_YARR_START_CHAR_FILTER)
         StartCharFilter& startCharFilter = bytecodePattern->m_startCharFilter;
@@ -2810,6 +2837,45 @@ public:
 #endif
 
         return bytecodePattern;
+    }
+
+    BytecodePattern::SpecificPattern extractSpacesPattern()
+    {
+        using SpecificPattern = BytecodePattern::SpecificPattern;
+        if (m_pattern.eitherUnicode() || m_pattern.sticky() || m_pattern.multiline()
+            || m_pattern.m_containsModifiers || m_pattern.m_numSubpatterns
+            || m_pattern.ignoreCase() || m_pattern.m_body->m_alternatives.size() != 1)
+            return SpecificPattern::None;
+
+        const auto& terms = m_pattern.m_body->m_alternatives[0]->m_terms;
+        if (terms.size() != 2 && terms.size() != 3)
+            return SpecificPattern::None;
+        bool leading = terms[0].type == PatternTerm::Type::AssertionBOL;
+        if (!leading && terms[terms.size() - 1].type != PatternTerm::Type::AssertionEOL)
+            return SpecificPattern::None;
+
+        unsigned first = leading ? 1 : 0;
+        unsigned last = terms.size() - (leading ? 0 : 1);
+        const auto* spaces = YarrPattern::spacesCharacterClass();
+        for (unsigned i = first; i < last; ++i) {
+            const auto& term = terms[i];
+            if (term.type != PatternTerm::Type::CharacterClass || term.characterClass != spaces
+                || term.m_invert || term.m_matchDirection != Forward)
+                return SpecificPattern::None;
+        }
+        const auto& greedy = terms[last - 1];
+        if (greedy.quantityType != QuantifierType::Greedy || greedy.quantityMinCount
+            || greedy.quantityMaxCount != quantifyInfinite)
+            return SpecificPattern::None;
+        bool requiresOne = last - first == 2;
+        if (requiresOne) {
+            const auto& once = terms[first];
+            if (once.quantityType != QuantifierType::FixedCount || once.quantityMinCount != 1 || once.quantityMaxCount != 1)
+                return SpecificPattern::None;
+        }
+        if (leading)
+            return requiresOne ? SpecificPattern::LeadingSpacesPlus : SpecificPattern::LeadingSpacesStar;
+        return requiresOne ? SpecificPattern::TrailingSpacesPlus : SpecificPattern::TrailingSpacesStar;
     }
 
     void checkInput(unsigned count)

@@ -519,6 +519,14 @@ struct FixedPrefixSearch {
 struct BytecodePattern : public gc {
     WTF_MAKE_TZONE_ALLOCATED(BytecodePattern);
 public:
+    enum class SpecificPattern : uint8_t {
+        None,
+        LeadingSpacesStar,
+        LeadingSpacesPlus,
+        TrailingSpacesStar,
+        TrailingSpacesPlus,
+    };
+
     static void bytecodePatternClear(void* obj, void* cd)
     {
         BytecodePattern* self = reinterpret_cast<BytecodePattern*>(obj);
@@ -602,6 +610,7 @@ public:
 
     std::unique_ptr<ByteDisjunction> m_body;
     OptionSet<Flags> m_flags;
+    SpecificPattern m_specificPattern { SpecificPattern::None };
     // Each BytecodePattern is associated with a RegExp, each RegExp is associated
     // with a VM.  Cache a pointer to our VM's m_regExpAllocator.
     BumpPointerAllocator* m_allocator;
