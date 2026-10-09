@@ -106,6 +106,11 @@ struct ByteTerm {
         PatternCharacterNonGreedy,
         PatternLiteral,
         PatternLiteral16,
+        // The input check count occupies the otherwise unused frameLocation.
+        CheckInputLiteral,
+        CheckInputLiteral16,
+        CheckInputCharacter,
+        CheckInputCharacter16,
         // Cased Characeter Types
         PatternCasedCharacterOnce,
         PatternCasedCharacterFixed,

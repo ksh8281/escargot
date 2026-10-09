@@ -1932,6 +1932,34 @@ public:
             if (input.matchesLiteral16(currentTerm()))
                 MATCH_NEXT();
             BACKTRACK();
+        case ByteTerm::Type::CheckInputLiteral:
+            if (!input.checkInput(currentTerm().frameLocation))
+                BACKTRACK();
+            if (input.matchesLiteral(currentTerm()))
+                MATCH_NEXT();
+            input.uncheckInput(currentTerm().frameLocation);
+            BACKTRACK();
+        case ByteTerm::Type::CheckInputLiteral16:
+            if (!input.checkInput(currentTerm().frameLocation))
+                BACKTRACK();
+            if (input.matchesLiteral16(currentTerm()))
+                MATCH_NEXT();
+            input.uncheckInput(currentTerm().frameLocation);
+            BACKTRACK();
+        case ByteTerm::Type::CheckInputCharacter:
+            if (!input.checkInput(currentTerm().frameLocation))
+                BACKTRACK();
+            if ((input.readCheckedDontAdvance(currentTerm().inputPosition) | currentTerm().literal.masks[0]) == currentTerm().literal.characters[0])
+                MATCH_NEXT();
+            input.uncheckInput(currentTerm().frameLocation);
+            BACKTRACK();
+        case ByteTerm::Type::CheckInputCharacter16:
+            if (!input.checkInput(currentTerm().frameLocation))
+                BACKTRACK();
+            if ((input.readCheckedDontAdvance(currentTerm().inputPosition) | currentTerm().literal16.masks[0]) == currentTerm().literal16.characters[0])
+                MATCH_NEXT();
+            input.uncheckInput(currentTerm().frameLocation);
+            BACKTRACK();
         case ByteTerm::Type::PatternCharacterOnce:
         case ByteTerm::Type::PatternCharacterFixed: {
             DUMP_CURR_CHAR();
@@ -2259,6 +2287,13 @@ public:
         case ByteTerm::Type::AssertionWordBoundary:
         case ByteTerm::Type::PatternLiteral:
         case ByteTerm::Type::PatternLiteral16:
+            BACKTRACK();
+
+        case ByteTerm::Type::CheckInputLiteral:
+        case ByteTerm::Type::CheckInputLiteral16:
+        case ByteTerm::Type::CheckInputCharacter:
+        case ByteTerm::Type::CheckInputCharacter16:
+            input.uncheckInput(currentTerm().frameLocation);
             BACKTRACK();
 
         case ByteTerm::Type::PatternCharacterOnce:
@@ -3085,7 +3120,29 @@ public:
         uint16_t character, mask;
         if (term.matchDirection() == Forward && literalCharacter(term, character, mask) && !m_bodyDisjunction->terms.isEmpty()) {
             auto& previous = m_bodyDisjunction->terms.last();
+            if (previous.type == ByteTerm::Type::CheckInput) {
+                unsigned count = previous.checkInputCount;
+                previous = term;
+                previous.frameLocation = count;
+                memset(&previous.literal, 0, sizeof(previous.literal));
+                if (character <= 0xff) {
+                    previous.type = ByteTerm::Type::CheckInputCharacter;
+                    previous.literal.characters[0] = character;
+                    previous.literal.masks[0] = mask;
+                    previous.literal.length = 1;
+                } else {
+                    previous.type = ByteTerm::Type::CheckInputCharacter16;
+                    previous.literal16.characters[0] = character;
+                    previous.literal16.masks[0] = mask;
+                    previous.literal16.length = 1;
+                }
+                return;
+            }
             if (previous.matchDirection() == Forward) {
+                if (previous.type == ByteTerm::Type::CheckInputCharacter)
+                    previous.type = ByteTerm::Type::CheckInputLiteral;
+                if (previous.type == ByteTerm::Type::CheckInputCharacter16)
+                    previous.type = ByteTerm::Type::CheckInputLiteral16;
                 uint16_t previousCharacter, previousMask;
                 if (literalCharacter(previous, previousCharacter, previousMask) && previous.inputPosition == term.inputPosition + 1) {
                     bool latin1 = previousCharacter <= 0xff && character <= 0xff;
@@ -3101,7 +3158,8 @@ public:
                         previous.literal16.length = 1;
                     }
                 }
-                if (previous.type == ByteTerm::Type::PatternLiteral && character > 0xff
+                bool checkedLiteral = previous.type == ByteTerm::Type::CheckInputLiteral;
+                if ((previous.type == ByteTerm::Type::PatternLiteral || checkedLiteral) && character > 0xff
                     && previous.literal.length < 4 && previous.inputPosition == term.inputPosition + previous.literal.length) {
                     unsigned length = previous.literal.length;
                     uint16_t characters[4] { }, masks[4] { };
@@ -3109,12 +3167,12 @@ public:
                         characters[i] = previous.literal.characters[i];
                         masks[i] = previous.literal.masks[i];
                     }
-                    previous.type = ByteTerm::Type::PatternLiteral16;
+                    previous.type = checkedLiteral ? ByteTerm::Type::CheckInputLiteral16 : ByteTerm::Type::PatternLiteral16;
                     memcpy(previous.literal16.characters, characters, sizeof(characters));
                     memcpy(previous.literal16.masks, masks, sizeof(masks));
                     previous.literal16.length = length;
                 }
-                if (previous.type == ByteTerm::Type::PatternLiteral && character <= 0xff
+                if ((previous.type == ByteTerm::Type::PatternLiteral || previous.type == ByteTerm::Type::CheckInputLiteral) && character <= 0xff
                     && previous.literal.length < sizeof(previous.literal.characters)
                     && previous.inputPosition == term.inputPosition + previous.literal.length) {
                     unsigned i = previous.literal.length++;
@@ -3122,7 +3180,7 @@ public:
                     previous.literal.masks[i] = mask;
                     return;
                 }
-                if (previous.type == ByteTerm::Type::PatternLiteral16 && previous.literal16.length < 4
+                if ((previous.type == ByteTerm::Type::PatternLiteral16 || previous.type == ByteTerm::Type::CheckInputLiteral16) && previous.literal16.length < 4
                     && previous.inputPosition == term.inputPosition + previous.literal16.length) {
                     unsigned i = previous.literal16.length++;
                     previous.literal16.characters[i] = character;
