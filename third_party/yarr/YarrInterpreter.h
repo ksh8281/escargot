@@ -557,6 +557,7 @@ public:
             characterClass->initializeLatin1Bitmap();
 
         m_numDuplicateNamedCaptureGroups = pattern.m_numDuplicateNamedCaptureGroups;
+        m_endAnchoredFixedSize = pattern.m_endAnchoredFixedSize;
     }
 
     ~BytecodePattern()
@@ -570,6 +571,7 @@ public:
     size_t estimatedSizeInBytes() const { return m_body->estimatedSizeInBytes(); }
 
     bool hasDuplicateNamedCaptureGroups() const { return !!m_numDuplicateNamedCaptureGroups; }
+    bool hasEndAnchoredFixedSize() const { return m_endAnchoredFixedSize != YarrPattern::endAnchoredFixedSizeNotSet; }
 
     unsigned offsetForDuplicateNamedGroupId(unsigned duplicateNamedGroupId)
     {
@@ -604,6 +606,7 @@ public:
     BumpPointerAllocator* m_allocator;
 
     unsigned m_numDuplicateNamedCaptureGroups;
+    unsigned m_endAnchoredFixedSize { YarrPattern::endAnchoredFixedSizeNotSet };
     unsigned m_offsetVectorBaseForNamedCaptures;
     unsigned m_offsetsSize;
     Vector<unsigned> m_duplicateNamedGroupForSubpatternId;

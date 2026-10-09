@@ -570,6 +570,7 @@ struct YarrPattern : public gc {
         m_numSubpatterns = 0;
         m_initialStartValueFrameLocation = 0;
         m_numDuplicateNamedCaptureGroups = 0;
+        m_endAnchoredFixedSize = endAnchoredFixedSizeNotSet;
 
         m_containsBackreferences = false;
         m_containsBOL = false;
@@ -731,6 +732,9 @@ struct YarrPattern : public gc {
 
     bool hasDuplicateNamedCaptureGroups() const { return !!m_numDuplicateNamedCaptureGroups; }
 
+    static constexpr unsigned endAnchoredFixedSizeNotSet = std::numeric_limits<unsigned>::max();
+    bool hasEndAnchoredFixedSize() const { return m_endAnchoredFixedSize != endAnchoredFixedSizeNotSet; }
+
     CompileMode compileMode() const
     {
         if (unicode())
@@ -751,6 +755,7 @@ struct YarrPattern : public gc {
     bool m_hasNamedCaptureGroups : 1;
     bool m_saveInitialStartValue : 1;
     OptionSet<Flags> m_flags;
+    unsigned m_endAnchoredFixedSize { endAnchoredFixedSizeNotSet };
     unsigned m_numSubpatterns { 0 };
     unsigned m_initialStartValueFrameLocation { 0 };
     unsigned m_numDuplicateNamedCaptureGroups { 0 };

@@ -1940,6 +1940,23 @@ public:
         }
     }
 
+    void computeEndAnchoredFixedSize()
+    {
+        if (m_pattern.multiline() || m_pattern.sticky() || m_pattern.m_containsModifiers
+            || m_pattern.m_containsBOL || m_pattern.m_containsUnsignedLengthPattern
+            || !m_pattern.m_body->m_hasFixedSize || m_pattern.m_saveInitialStartValue)
+            return;
+
+        unsigned maximumSize = 0;
+        for (auto& alternative : m_pattern.m_body->m_alternatives) {
+            if (!alternative->m_hasFixedSize || alternative->m_terms.isEmpty()
+                || alternative->m_terms.last().type != PatternTerm::Type::AssertionEOL)
+                return;
+            maximumSize = std::max(maximumSize, alternative->m_minimumSize);
+        }
+        m_pattern.m_endAnchoredFixedSize = maximumSize;
+    }
+
     void setupNamedCaptures()
     {
         if (!m_pattern.m_hasNamedCaptureGroups)
@@ -2236,6 +2253,7 @@ ErrorCode YarrPattern::compile(StringView patternString)
             return error;
     }
 
+    constructor.computeEndAnchoredFixedSize();
     constructor.setupNamedCaptures();
 
     // NOTE(unused)

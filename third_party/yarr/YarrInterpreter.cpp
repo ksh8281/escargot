@@ -2307,6 +2307,9 @@ public:
         if (!input.isAvailableInput(0))
             return offsetNoMatch;
 
+        if (pattern->hasEndAnchoredFixedSize() && input.end() >= pattern->m_endAnchoredFixedSize)
+            input.setPos(std::max(input.getPos(), input.end() - pattern->m_endAnchoredFixedSize));
+
 #if defined(ENABLE_YARR_START_CHAR_FILTER)
         if (pattern->m_fixedPrefixSearch && !pattern->m_fixedPrefixSearch.value()->atom.isEmpty()) {
             const auto& atom = pattern->m_fixedPrefixSearch.value()->atom;
