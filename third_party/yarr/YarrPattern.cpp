@@ -1961,6 +1961,61 @@ public:
         }
     }
 
+    void optimizePossessiveQuantifiers()
+    {
+        // In legacy mode the parsed classes already contain their case folds.
+        // Unicode folding and variable-width reads need a separate proof.
+        if (m_pattern.eitherUnicode())
+            return;
+
+        auto rejectsCharacter = [](const PatternTerm& term, char32_t ch) {
+            if (term.type == PatternTerm::Type::PatternCharacter) {
+                if (term.patternCharacter == ch)
+                    return false;
+                if (term.m_currentFlags.contains(Flags::IgnoreCase)) {
+                    if (!isASCII(term.patternCharacter) || !isASCII(ch))
+                        return false;
+                    return toASCIILower(term.patternCharacter) != toASCIILower(ch);
+                }
+                return true;
+            }
+
+            const auto& characterClass = *term.characterClass;
+            bool contains = characterClass.m_anyCharacter;
+            const auto& matches = isASCII(ch) ? characterClass.m_matches : characterClass.m_matchesUnicode;
+            const auto& ranges = isASCII(ch) ? characterClass.m_ranges : characterClass.m_rangesUnicode;
+            for (auto match : matches)
+                contains |= match == ch;
+            for (auto range : ranges)
+                contains |= ch >= range.begin && ch <= range.end;
+            return term.m_invert ? contains : !contains;
+        };
+
+        for (auto& disjunction : m_pattern.m_disjunctions) {
+            for (auto& alternative : disjunction->m_alternatives) {
+                auto& terms = alternative->m_terms;
+                for (unsigned i = 1; i < terms.size(); ++i) {
+                    auto& greedy = terms[i - 1];
+                    const auto& next = terms[i];
+                    if (greedy.quantityType != QuantifierType::Greedy || greedy.m_matchDirection != Forward
+                        || (greedy.type != PatternTerm::Type::PatternCharacter && greedy.type != PatternTerm::Type::CharacterClass)
+                        || next.type != PatternTerm::Type::PatternCharacter || next.m_matchDirection != Forward
+                        || next.quantityType != QuantifierType::FixedCount || !next.quantityMinCount
+                        || !rejectsCharacter(greedy, next.patternCharacter))
+                        continue;
+                    if (next.m_currentFlags.contains(Flags::IgnoreCase)
+                        && (!isASCII(next.patternCharacter)
+                            || !rejectsCharacter(greedy, toASCIILower(next.patternCharacter))
+                            || !rejectsCharacter(greedy, toASCIIUpper(next.patternCharacter))))
+                        continue;
+                    // Giving a character back cannot help the mandatory next
+                    // literal. Rewind the whole greedy term on failure.
+                    greedy.m_possessive = true;
+                }
+            }
+        }
+    }
+
     void computeEndAnchoredFixedSize()
     {
         if (m_pattern.multiline() || m_pattern.sticky() || m_pattern.m_containsModifiers
@@ -2274,6 +2329,7 @@ ErrorCode YarrPattern::compile(StringView patternString)
             return error;
     }
 
+    constructor.optimizePossessiveQuantifiers();
     constructor.computeEndAnchoredFixedSize();
     constructor.setupNamedCaptures();
 

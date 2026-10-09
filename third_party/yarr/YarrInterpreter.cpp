@@ -834,6 +834,12 @@ public:
             break;
 
         case QuantifierType::Greedy:
+            if (term.m_possessive) {
+                ASSERT(!isEitherUnicodeCompilation() && term.matchDirection() == Forward);
+                input.uncheckInput(backTrack->matchAmount * U16_LENGTH(term.atom.patternCharacter));
+                backTrack->matchAmount = 0;
+                return false;
+            }
             if (backTrack->matchAmount) {
                 --backTrack->matchAmount;
                 if (term.matchDirection() == Forward)
@@ -884,6 +890,12 @@ public:
             break;
 
         case QuantifierType::Greedy:
+            if (term.m_possessive) {
+                ASSERT(!isEitherUnicodeCompilation() && term.matchDirection() == Forward);
+                input.uncheckInput(backTrack->matchAmount);
+                backTrack->matchAmount = 0;
+                return false;
+            }
             if (backTrack->matchAmount) {
                 --backTrack->matchAmount;
                 if (term.matchDirection() == Forward)
@@ -1046,6 +1058,12 @@ public:
             break;
 
         case QuantifierType::Greedy:
+            if (term.m_possessive) {
+                ASSERT(!isEitherUnicodeCompilation() && term.matchDirection() == Forward);
+                input.uncheckInput(backTrack->matchAmount);
+                backTrack->matchAmount = 0;
+                return false;
+            }
             if (backTrack->matchAmount) {
                 if (isEitherUnicodeCompilation()) {
                     // Unmatch one codepoint
@@ -3315,6 +3333,7 @@ public:
                     if (currentInputPosition.hasOverflowed())
                         return ErrorCode::OffsetTooLarge;
                     atomPatternCharacter(term.patternCharacter, matchDirection, currentInputPosition, term.frameLocation, term.quantityMaxCount, term.quantityType, term.m_currentFlags);
+                    m_bodyDisjunction->terms.last().m_possessive = term.m_possessive;
                     break;
                 }
 
@@ -3323,6 +3342,7 @@ public:
                     if (currentInputPosition.hasOverflowed())
                         return ErrorCode::OffsetTooLarge;
                     atomCharacterClass(term.characterClass, term.invert(), matchDirection, currentInputPosition, term.frameLocation, term.quantityMaxCount, term.quantityType, term.m_currentFlags);
+                    m_bodyDisjunction->terms.last().m_possessive = term.m_possessive;
                     break;
                 }
 

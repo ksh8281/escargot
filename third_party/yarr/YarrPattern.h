@@ -218,6 +218,7 @@ struct PatternTerm {
     bool m_capture : 1;
     bool m_invert : 1;
     MatchDirection m_matchDirection : 1;
+    bool m_possessive { false };
     QuantifierType quantityType;
     Checked<unsigned> quantityMinCount;
     Checked<unsigned> quantityMaxCount;

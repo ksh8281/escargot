@@ -124,6 +124,7 @@ struct ByteTerm {
     bool m_capture : 1;
     bool m_invert : 1;
     MatchDirection m_matchDirection : 1;
+    bool m_possessive { false };
     unsigned inputPosition { 0 };
 
     ByteTerm(char32_t ch, unsigned inputPos, unsigned frameLocation, Checked<unsigned> quantityCount, QuantifierType quantityType, OptionSet<Flags> flags)
