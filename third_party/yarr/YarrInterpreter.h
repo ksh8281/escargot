@@ -584,10 +584,8 @@ public:
 
     ~BytecodePattern()
     {
-#if defined(ENABLE_YARR_START_CHAR_FILTER)
         if (m_fixedPrefixSearch)
             delete m_fixedPrefixSearch.value();
-#endif
     }
 
     size_t estimatedSizeInBytes() const { return m_body->estimatedSizeInBytes(); }
@@ -637,10 +635,8 @@ public:
     const CharacterClass* newlineCharacterClass;
     const CharacterClass* wordcharCharacterClass;
     const CharacterClass* ignoreCaseWordcharCharacterClass;
-#if defined(ENABLE_YARR_START_CHAR_FILTER)
     StartCharFilter m_startCharFilter;
     ::Escargot::Optional<FixedPrefixSearch*> m_fixedPrefixSearch;
-#endif
 
 private:
     Vector<std::unique_ptr<ByteDisjunction>> m_allParenthesesInfo;

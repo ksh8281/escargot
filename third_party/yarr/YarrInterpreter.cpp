@@ -604,7 +604,6 @@ public:
         return false;
     }
 
-#if defined(ENABLE_YARR_START_CHAR_FILTER)
     ALWAYS_INLINE bool mayStartMatchAt(char32_t ch)
     {
         const StartCharFilter& filter = pattern->m_startCharFilter;
@@ -653,7 +652,6 @@ public:
         }
         return false;
     }
-#endif
 
     bool checkCharacter(ByteTerm& term, unsigned negativeInputOffset)
     {
@@ -1872,12 +1870,10 @@ public:
         if (btrack)
             BACKTRACK();
 
-#if defined(ENABLE_YARR_START_CHAR_FILTER)
         // Only the body may skip start offsets; a parentheses/assertion
         // disjunction has to match exactly where its caller left the input.
         if (disjunction == pattern->m_body.get() && !advanceToPossibleStart())
             return JSRegExpResult::NoMatch;
-#endif
 
         context->matchBegin = input.getPos();
         context->term = disjunction->terms.data();
@@ -2228,14 +2224,12 @@ public:
 
             input.next();
 
-#if defined(ENABLE_YARR_START_CHAR_FILTER)
             // Skip the start offsets where no alternative can even consume its
             // first character, rather than retrying the whole body at each one.
             if (!advanceToPossibleStart()) {
                 DUMP_EXTRA("- Return NoMatch\n");
                 return JSRegExpResult::NoMatch;
             }
-#endif
 
             context->matchBegin = input.getPos();
 
@@ -2416,7 +2410,6 @@ public:
             return start;
         }
 
-#if defined(ENABLE_YARR_START_CHAR_FILTER)
         if (pattern->m_fixedPrefixSearch && !pattern->m_fixedPrefixSearch.value()->atoms.isEmpty()) {
             const auto& search = *pattern->m_fixedPrefixSearch.value();
             if (search.anchoredStart && input.getPos())
@@ -2447,7 +2440,6 @@ public:
             }
             return offsetNoMatch;
         }
-#endif
 
         for (unsigned i = 0; i < pattern->m_body->m_numSubpatterns + 1; ++i)
             output[i << 1] = offsetNoMatch;
@@ -2507,7 +2499,6 @@ private:
     unsigned remainingMatchCount;
 };
 
-#if defined(ENABLE_YARR_START_CHAR_FILTER)
 
 // Computes the StartCharFilter of a pattern (see YarrInterpreter.h) from the
 // parsed form rather than from the bytecode, because PatternTerm still has the
@@ -2911,7 +2902,6 @@ private:
     }
 };
 
-#endif // ENABLE_YARR_START_CHAR_FILTER
 
 class ByteCompiler {
     struct ParenthesesStackEntry {
@@ -2950,11 +2940,9 @@ public:
         if (bytecodePattern->m_specificPattern == BytecodePattern::SpecificPattern::None)
             bytecodePattern->m_specificPattern = extractNewlinesPattern();
 
-#if defined(ENABLE_YARR_START_CHAR_FILTER)
         StartCharFilter& startCharFilter = bytecodePattern->m_startCharFilter;
         startCharFilter.valid = StartCharFilterBuilder::build(m_pattern, startCharFilter);
         bytecodePattern->m_fixedPrefixSearch = StartCharFilterBuilder::buildFixedPrefixSearch(m_pattern);
-#endif
 
         return bytecodePattern;
     }
