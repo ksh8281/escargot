@@ -603,41 +603,13 @@ static bool canRemoveLiteralMatches(RegExpObject* regexp)
     return true;
 }
 
-// V8 GetRewoundRegexpIndicesList / TruncateRegexpIndicesList retain a bounded
-// start-index buffer between calls. Move its storage into a local owner while
-// it is in use so a reentrant call cannot overwrite the outer match offsets.
+// V8's bounded indices cache inspires the retention limit. The buffer
+// also recovers bounded storage released when a large match vector grows;
+// active vectors retain exclusive ownership during reentrant calls.
 // https://github.com/v8/v8/blob/e3e0f1c146fc15721a3e8f539ab412cd70fb1082/src/runtime/runtime-regexp.cc
-class LiteralMatchIndices {
-public:
-    LiteralMatchIndices()
-    {
-        m_indices.swap(ThreadLocal::regexpMatchIndices());
-        ASSERT(m_indices.empty());
-    }
-
-    ~LiteralMatchIndices()
-    {
-        constexpr size_t maximumRetainedCapacity = 8192 / sizeof(unsigned);
-        auto& cached = ThreadLocal::regexpMatchIndices();
-        if (m_indices.capacity() <= maximumRetainedCapacity && m_indices.capacity() > cached.capacity()) {
-            m_indices.clear();
-            m_indices.swap(cached);
-        }
-    }
-
-    std::vector<unsigned>& indices()
-    {
-        return m_indices;
-    }
-
-private:
-    std::vector<unsigned> m_indices;
-};
-
 static String* stringRemoveLiteralMatches(ExecutionState& state, String* string, RegExpObject* regexp)
 {
-    LiteralMatchIndices storage;
-    auto& matches = storage.indices();
+    LiteralMatchIndices matches(state.context()->vmInstance());
     regexp->collectLiteralMatches(state, string, matches);
     if (matches.empty()) {
         return string;

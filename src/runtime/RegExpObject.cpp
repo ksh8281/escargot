@@ -64,6 +64,43 @@
 
 namespace Escargot {
 
+LiteralMatchIndices::LiteralMatchIndices(VMInstance* vmInstance)
+    : m_vmInstance(vmInstance)
+{
+    const size_t capacity = vmInstance->regexpMatchBufferCapacity();
+    if (capacity) {
+        unsigned* buffer = vmInstance->allocateRegExpMatchBuffer(capacity);
+        m_buffer = buffer;
+        m_end = buffer;
+        m_capacityEnd = buffer + capacity;
+    }
+}
+
+LiteralMatchIndices::~LiteralMatchIndices()
+{
+    if (m_buffer) {
+        m_vmInstance->releaseRegExpMatchBuffer(m_buffer.value(), m_capacityEnd.value() - m_buffer.value());
+    }
+}
+
+void LiteralMatchIndices::grow()
+{
+    const size_t length = size();
+    const size_t maximumCapacity = std::allocator<unsigned>().max_size();
+    if (UNLIKELY(length == maximumCapacity)) {
+        throw std::length_error("RegExp match indices exceed maximum size");
+    }
+    const size_t capacity = length > maximumCapacity / 2 ? maximumCapacity : std::max(size_t(1), length * 2);
+    unsigned* buffer = m_vmInstance->allocateRegExpMatchBuffer(capacity);
+    if (m_buffer) {
+        memcpy(buffer, m_buffer.value(), length * sizeof(unsigned));
+        m_vmInstance->releaseRegExpMatchBuffer(m_buffer.value(), length);
+    }
+    m_buffer = buffer;
+    m_end = buffer + length;
+    m_capacityEnd = buffer + capacity;
+}
+
 void* RegExpObject::operator new(size_t size)
 {
 #if defined(ESCARGOT_USE_32BIT_IN_64BIT)
@@ -405,7 +442,7 @@ RegExpObject::RegExpCacheEntry& RegExpCacheMap::getCacheEntryAndCompileIfNeeded(
 // per-match capture vectors. The caller admits only nonempty ASCII literals
 // without syntax, case folding, or sticky matching.
 // https://github.com/v8/v8/blob/e3e0f1c146fc15721a3e8f539ab412cd70fb1082/src/runtime/runtime-regexp.cc
-void RegExpObject::collectLiteralMatches(ExecutionState& state, String* string, std::vector<unsigned>& matches)
+void RegExpObject::collectLiteralMatches(ExecutionState& state, String* string, LiteralMatchIndices& matches)
 {
     ASSERT(!(option() & (Option::IgnoreCase | Option::Sticky)));
     ASSERT(source()->length() && matches.empty());
@@ -422,11 +459,15 @@ void RegExpObject::collectLiteralMatches(ExecutionState& state, String* string, 
     }
     while (position <= input.length - matchLength) {
         if (input.has8BitContent) {
-            Optional<const char*> found = static_cast<const char*>(memchr(input.bufferAs8Bit + position, literal.bufferAs8Bit[0], input.length - matchLength - position + 1));
-            if (!found) {
-                break;
+            // Dense literals often begin at the next candidate already.
+            // Avoid calling the scanner again for that known first character.
+            if (input.bufferAs8Bit[position] != literal.bufferAs8Bit[0]) {
+                Optional<const char*> found = static_cast<const char*>(memchr(input.bufferAs8Bit + position, literal.bufferAs8Bit[0], input.length - matchLength - position + 1));
+                if (!found) {
+                    break;
+                }
+                position = found.value() - input.bufferAs8Bit;
             }
-            position = found.value() - input.bufferAs8Bit;
             if (memcmp(input.bufferAs8Bit + position, literal.bufferAs8Bit, matchLength)) {
                 ++position;
                 continue;

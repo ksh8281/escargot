@@ -37,6 +37,51 @@ struct BytecodePattern;
 
 namespace Escargot {
 
+class VMInstance;
+
+class LiteralMatchIndices {
+public:
+    explicit LiteralMatchIndices(VMInstance* vmInstance);
+    ~LiteralMatchIndices();
+    LiteralMatchIndices(const LiteralMatchIndices&) = delete;
+    LiteralMatchIndices& operator=(const LiteralMatchIndices&) = delete;
+
+    bool empty() const { return m_end == m_buffer; }
+    size_t size() const
+    {
+        return m_buffer ? m_end.value() - m_buffer.value() : 0;
+    }
+
+    unsigned operator[](size_t index) const
+    {
+        ASSERT(m_buffer && index < size());
+        return m_buffer.value()[index];
+    }
+
+    unsigned back() const
+    {
+        ASSERT(m_buffer && !empty());
+        return m_end.value()[-1];
+    }
+
+    void push_back(unsigned index)
+    {
+        if (m_end == m_capacityEnd) {
+            grow();
+        }
+        ASSERT(m_end);
+        *m_end.value() = index;
+        m_end = m_end.value() + 1;
+    }
+
+private:
+    void grow();
+    Optional<unsigned*> m_buffer;
+    Optional<unsigned*> m_end;
+    Optional<unsigned*> m_capacityEnd;
+    VMInstance* m_vmInstance;
+};
+
 struct RegexMatchResult {
     struct RegexMatchResultPiece {
         unsigned m_start, m_end;
@@ -152,7 +197,7 @@ public:
         return res;
     }
 
-    void collectLiteralMatches(ExecutionState& state, String* str, std::vector<unsigned>& matches);
+    void collectLiteralMatches(ExecutionState& state, String* str, LiteralMatchIndices& matches);
     bool match(ExecutionState& state, String* str, RegexMatchResult& result, bool testOnly = false, size_t startIndex = 0);
     bool matchNonGlobally(ExecutionState& state, String* str, RegexMatchResult& result, bool testOnly = false, size_t startIndex = 0);
     uint32_t getOptions(ExecutionState& state);
