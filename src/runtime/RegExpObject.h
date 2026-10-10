@@ -87,8 +87,26 @@ struct RegexMatchResult {
         unsigned m_start, m_end;
     };
     COMPILE_ASSERT((sizeof(RegexMatchResultPiece)) == (sizeof(unsigned) * 2), sizeof_RegexMatchResultPiece_wrong);
-    int m_subPatternNum;
-    std::vector<std::vector<RegexMatchResultPiece>> m_matchResults;
+    int m_subPatternNum { 0 };
+    // Captures of successive matches share one contiguous offset buffer.
+    // No strings or GC-managed values are stored here.
+    std::vector<RegexMatchResultPiece> m_matchResults;
+
+    size_t captureCount() const { return m_subPatternNum + 1; }
+    size_t matchCount() const { return m_matchResults.size() / captureCount(); }
+
+    const RegexMatchResultPiece& matchAt(size_t matchIndex, size_t captureIndex) const
+    {
+        ASSERT(matchIndex < matchCount() && captureIndex < captureCount());
+        return m_matchResults[matchIndex * captureCount() + captureIndex];
+    }
+
+    void append(const RegexMatchResult& result)
+    {
+        ASSERT(m_matchResults.empty() || captureCount() == result.captureCount());
+        m_subPatternNum = result.m_subPatternNum;
+        m_matchResults.insert(m_matchResults.end(), result.m_matchResults.begin(), result.m_matchResults.end());
+    }
 };
 
 #if defined(ESCARGOT_USE_32BIT_IN_64BIT)
