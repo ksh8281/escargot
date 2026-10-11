@@ -126,6 +126,19 @@ void stackCheck();
 
 RAPIDJSON_NAMESPACE_BEGIN
 
+// Custom in-situ streams may scan unescaped string spans through ADL. Other
+// streams retain the ordinary per-code-unit reader path.
+template <typename InputStream, typename OutputStream>
+inline void ScanCopyUnescapedString(InputStream&, OutputStream&) {}
+
+// A custom encoding may reject an unrepresentable code point through ADL.
+// Ordinary encodings accept every code point supported by their Encode method.
+template <typename Encoding, typename OutputStream>
+inline bool EncodeJSONCodePoint(Encoding, OutputStream& output, unsigned codepoint) {
+    Encoding::Encode(output, codepoint);
+    return true;
+}
+
 ///////////////////////////////////////////////////////////////////////////////
 // ParseFlag
 
@@ -729,6 +742,8 @@ private:
         is.Take(); // Skip '\"'
 
         for (;;) {
+            if ((parseFlags & kParseInsituFlag) && !(parseFlags & kParseValidateEncodingFlag))
+                ScanCopyUnescapedString(is, os);
             Ch c = is.Peek();
             if (c == '\\') { // Escape
                 is.Take();
@@ -748,7 +763,8 @@ private:
                             RAPIDJSON_PARSE_ERROR(kParseErrorStringUnicodeSurrogateInvalid, is.Tell() - 2);
                         codepoint = (((codepoint - 0xD800) << 10) | (codepoint2 - 0xDC00)) + 0x10000;
                     }
-                    TEncoding::Encode(os, codepoint);
+                    if (!EncodeJSONCodePoint(TEncoding(), os, codepoint))
+                        RAPIDJSON_PARSE_ERROR(kParseErrorTermination, is.Tell());
                 } else
                     RAPIDJSON_PARSE_ERROR(kParseErrorStringEscapeInvalid, is.Tell() - 1);
             } else if (c == '"') { // Closing double quote
