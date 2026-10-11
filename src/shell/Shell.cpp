@@ -37,6 +37,7 @@
 #endif
 
 #include "api/EscargotPublic.h"
+#include <gc/gc.h>
 
 #if defined(__clang__) || defined(__GNUC__) || defined(_MSC_VER)
 extern "C" {
@@ -247,17 +248,49 @@ static bool stringEndsWith(const std::string& str, const std::string& suffix)
     return str.size() >= suffix.size() && 0 == str.compare(str.size() - suffix.size(), suffix.size(), suffix);
 }
 
+static void printGCCheckpointStatistics(const std::string& message)
+{
+    constexpr size_t prefixLength = sizeof("MEM_CHECKPOINT ") - 1;
+    if (message.compare(0, prefixLength, "MEM_CHECKPOINT ") != 0) {
+        return;
+    }
+    GC_prof_stats_s stats = {};
+    GC_get_prof_stats(&stats, sizeof(stats));
+    fprintf(stderr, "GC_DIAG {\"checkpoint\":%s,\"heap_full\":%zu,"
+                    "\"free_full\":%zu,\"unmapped\":%zu,"
+                    "\"allocated_since_gc\":%zu,\"allocated_before_gc\":%zu,"
+                    "\"reclaimed_since_gc\":%zu,\"reclaimed_before_gc\":%zu,"
+                    "\"explicit_freed_since_gc\":%zu,\"non_gc\":%zu,"
+                    "\"gc_no\":%zu,\"obtained_from_os\":%zu}\n",
+            message.c_str() + prefixLength,
+            static_cast<size_t>(stats.heapsize_full),
+            static_cast<size_t>(stats.free_bytes_full),
+            static_cast<size_t>(stats.unmapped_bytes),
+            static_cast<size_t>(stats.bytes_allocd_since_gc),
+            static_cast<size_t>(stats.allocd_bytes_before_gc),
+            static_cast<size_t>(stats.bytes_reclaimed_since_gc),
+            static_cast<size_t>(stats.reclaimed_bytes_before_gc),
+            static_cast<size_t>(stats.expl_freed_bytes_since_gc),
+            static_cast<size_t>(stats.non_gc_bytes),
+            static_cast<size_t>(stats.gc_no),
+            static_cast<size_t>(stats.obtained_from_os_bytes));
+}
+
 ValueRef* builtinPrint(ExecutionStateRef* state, ValueRef* thisValue, size_t argc, ValueRef** argv, bool isConstructCall)
 {
     if (argc >= 1) {
         StringRef* printMsg;
         if (argv[0]->isSymbol()) {
             printMsg = argv[0]->asSymbol()->symbolDescriptiveString();
-            puts(printMsg->toStdUTF8String().data());
+            auto message = printMsg->toStdUTF8String();
+            printGCCheckpointStatistics(message);
+            puts(message.data());
             state->context()->printDebugger(printMsg);
         } else {
             printMsg = argv[0]->toString(state);
-            puts(printMsg->toStdUTF8String().data());
+            auto message = printMsg->toStdUTF8String();
+            printGCCheckpointStatistics(message);
+            puts(message.data());
             state->context()->printDebugger(printMsg->toString(state));
         }
     } else {
