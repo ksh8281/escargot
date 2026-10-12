@@ -1249,6 +1249,7 @@ static void printHelp()
     printf("  --shell                     Force starting the interactive shell\n");
     printf("  --module                    Execute the following script as an ES module\n");
     printf("  --gc-incremental            Enable incremental garbage collection\n");
+    printf("  --gc-adaptive               Enable adaptive incremental garbage collection\n");
     printf("  --canblock-is-false         Set the platform canBlock flag to false\n");
     printf("  --filename-as=<name>        Specify the file name of the executed script\n");
     printf("  --start-debug-server[=opt]  Start the debugger server\n");
@@ -1293,11 +1294,13 @@ static __attribute__((noinline)) int shellMain(int argc, char* argv[], void* tar
 
     bool waitBeforeExit = false;
 
-    Globals::InitializeOption initializeOption = Globals::InitializeOption::None;
+    Globals::InitializeOption initializeOption = Globals::InitializeOption::PreferAdaptiveIncrementalGC;
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-e") == 0) {
             // The next argument is JavaScript source, not a shell option.
             i++;
+        } else if (strcmp(argv[i], "--gc-adaptive") == 0) {
+            initializeOption = initializeOption | Globals::InitializeOption::PreferAdaptiveIncrementalGC;
         } else if (strcmp(argv[i], "--gc-incremental") == 0) {
             initializeOption = initializeOption | Globals::InitializeOption::PreferIncrementalGC;
         }
@@ -1332,6 +1335,9 @@ static __attribute__((noinline)) int shellMain(int argc, char* argv[], void* tar
     for (int i = 1; i < argc; i++) {
         if (strlen(argv[i]) >= 2 && argv[i][0] == '-') { // parse command line option
             if (argv[i][1] == '-') { // `--option` case
+                if (strcmp(argv[i], "--gc-adaptive") == 0) {
+                    continue;
+                }
                 if (strcmp(argv[i], "--gc-incremental") == 0) {
                     // Already applied before initializing the engine.
                     continue;

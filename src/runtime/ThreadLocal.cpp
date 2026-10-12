@@ -553,8 +553,14 @@ void ThreadLocal::initializeTlsKeySlotOffsets()
 static void initGcFlags(Globals::InitializeOption optionFromGlobal)
 {
 #if defined(OS_POSIX)
-    if (static_cast<uint32_t>(optionFromGlobal & Globals::InitializeOption::PreferIncrementalGC)) {
-        setenv("GC_ENABLE_INCREMENTAL", "1", 1);
+    bool adaptive = static_cast<uint32_t>(optionFromGlobal
+                                          & Globals::InitializeOption::PreferAdaptiveIncrementalGC);
+    GC_set_adaptive_incremental(adaptive);
+    if (adaptive) {
+        GC_set_rate(30);
+        GC_set_time_limit(15);
+        GC_set_full_freq(8);
+        GC_set_max_prior_attempts(8);
     }
 #endif
 }
@@ -572,7 +578,13 @@ void ThreadLocal::initialize(uint32_t optionFromGlobal)
     }
 #endif
     // Heap is initialized for each thread
-    Heap::initialize();
+    bool preferIncremental = false;
+#if defined(OS_POSIX)
+    preferIncremental = optionFromGlobal
+                        & static_cast<uint32_t>(Globals::InitializeOption::PreferIncrementalGC
+                                                | Globals::InitializeOption::PreferAdaptiveIncrementalGC);
+#endif
+    Heap::initialize(preferIncremental);
 #if defined(ESCARGOT_USE_32BIT_IN_64BIT)
     g_cageBase = GC_get_cage_base();
     ESCARGOT_RELEASE_ASSERT(g_cageBase && !(g_cageBase & 0xffffffffULL));
