@@ -1293,7 +1293,7 @@ static __attribute__((noinline)) int shellMain(int argc, char* argv[], void* tar
 
     bool waitBeforeExit = false;
 
-    Globals::InitializeOption initializeOption = Globals::InitializeOption::None;
+    Globals::InitializeOption initializeOption = Globals::InitializeOption::PreferIncrementalGC;
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-e") == 0) {
             // The next argument is JavaScript source, not a shell option.
