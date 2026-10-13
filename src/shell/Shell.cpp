@@ -37,6 +37,7 @@
 #endif
 
 #include "api/EscargotPublic.h"
+#include <gc/gc.h>
 
 #if defined(__clang__) || defined(__GNUC__) || defined(_MSC_VER)
 extern "C" {
@@ -1249,6 +1250,7 @@ static void printHelp()
     printf("  --shell                     Force starting the interactive shell\n");
     printf("  --module                    Execute the following script as an ES module\n");
     printf("  --gc-incremental            Enable incremental garbage collection\n");
+    printf("  --gc-adaptive               Enable adaptive incremental garbage collection\n");
     printf("  --canblock-is-false         Set the platform canBlock flag to false\n");
     printf("  --filename-as=<name>        Specify the file name of the executed script\n");
     printf("  --start-debug-server[=opt]  Start the debugger server\n");
@@ -1298,6 +1300,8 @@ static __attribute__((noinline)) int shellMain(int argc, char* argv[], void* tar
         if (strcmp(argv[i], "-e") == 0) {
             // The next argument is JavaScript source, not a shell option.
             i++;
+        } else if (strcmp(argv[i], "--gc-adaptive") == 0) {
+            initializeOption = initializeOption | Globals::InitializeOption::PreferAdaptiveIncrementalGC;
         } else if (strcmp(argv[i], "--gc-incremental") == 0) {
             initializeOption = initializeOption | Globals::InitializeOption::PreferIncrementalGC;
         }
@@ -1332,6 +1336,9 @@ static __attribute__((noinline)) int shellMain(int argc, char* argv[], void* tar
     for (int i = 1; i < argc; i++) {
         if (strlen(argv[i]) >= 2 && argv[i][0] == '-') { // parse command line option
             if (argv[i][1] == '-') { // `--option` case
+                if (strcmp(argv[i], "--gc-adaptive") == 0) {
+                    continue;
+                }
                 if (strcmp(argv[i], "--gc-incremental") == 0) {
                     // Already applied before initializing the engine.
                     continue;
@@ -1488,6 +1495,14 @@ static __attribute__((noinline)) int shellMain(int argc, char* argv[], void* tar
     instance.release();
 
     Globals::finalize();
+
+    if (getenv("ESCARGOT_GC_COST_AUDIT")) {
+        fprintf(stderr, "GC_COST_AUDIT {\"time_limit\":%lu,\"full_frequency\":%d,\"automatic_disabled\":%d,\"adaptive\":%d,\"incremental\":%d,\"actual_vdb\":%u,\"collections\":%lu}\n",
+                GC_get_time_limit(), GC_get_full_freq(),
+                GC_get_disable_automatic_collection(), GC_get_adaptive_incremental(),
+                GC_is_incremental_mode(), GC_get_actual_vdb(),
+                static_cast<unsigned long>(GC_get_gc_no()));
+    }
 
 #if defined(ESCARGOT_GOOGLE_PERF)
     ProfilerStop();

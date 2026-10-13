@@ -107,7 +107,7 @@ void Heap::initializeCompressedType(CompressedType type, size_t size,
 
 #endif
 
-void Heap::initialize()
+void Heap::initialize(bool preferIncremental)
 {
 #if defined(ESCARGOT_USE_32BIT_IN_64BIT)
     for (auto& descriptor : s_compressedDescriptors) {
@@ -144,7 +144,22 @@ void Heap::initialize()
         RELEASE_ASSERT(prctl(PR_SET_NAME, "valgrind", 0UL, 0UL, 0UL) == 0);
     }
 #endif
+    // Request incremental collection before creating this thread's heap.
+    // A process-wide environment variable would affect other GC instances.
+    if (preferIncremental) {
+        GC_enable_incremental();
+    }
     GC_init();
+    // Controls for the paired full-collection management-cost experiment.
+    if (getenv("ESCARGOT_GC_TIME_UNLIMITED")) {
+        GC_set_time_limit(GC_TIME_UNLIMITED);
+    }
+    if (getenv("ESCARGOT_GC_FULL_EVERY_COLLECTION")) {
+        GC_set_full_freq(0);
+    }
+    if (getenv("ESCARGOT_GC_DISABLE_AUTOMATIC")) {
+        GC_set_disable_automatic_collection(1);
+    }
 #if defined(__tizen__) || defined(__TIZEN__) || defined(ESCARGOT_TIZEN) || defined(ESCARGOT_TIZEN_MAJOR_VERSION)
     if (restoreThreadName) {
         RELEASE_ASSERT(prctl(PR_SET_NAME, originalThreadName, 0UL, 0UL, 0UL) == 0);
@@ -161,7 +176,9 @@ void Heap::initialize()
 #endif
 
 #if defined(NDEBUG)
-    GC_set_warn_proc(GC_ignore_warn_proc);
+    if (!getenv("ESCARGOT_GC_COST_AUDIT")) {
+        GC_set_warn_proc(GC_ignore_warn_proc);
+    }
 #endif
 
     GC_set_oom_fn([](size_t sz) -> void* {

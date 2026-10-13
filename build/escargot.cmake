@@ -188,6 +188,8 @@ ENDIF()
 # Safely pass naturally inherited external flags to GCutil sub-component
 SET (GCUTIL_CFLAGS_FROM_EXTERNAL ${GCUTIL_CFLAGS_FROM_EXTERNAL} ${ESCARGOT_CFLAGS_FROM_EXTERNAL} ${ESCARGOT_THIRDPARTY_CFLAGS})
 ADD_SUBDIRECTORY (third_party/GCutil)
+# Measurement snapshot: reserve half of a one-million-VMA kernel budget.
+TARGET_COMPILE_DEFINITIONS(gc-lib PRIVATE GC_UNMAPPED_REGIONS_SOFT_LIMIT=250000)
 SET (ESCARGOT_LIBRARIES ${ESCARGOT_LIBRARIES} gc-lib)
 
 #######################################################
