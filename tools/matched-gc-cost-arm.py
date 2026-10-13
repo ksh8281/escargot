@@ -34,8 +34,8 @@ def validate_output(mode, text, count=18):
         raise RuntimeError(f'Unexpected fixed work: {work}')
     expected = {'time_limit': 999999, 'full_frequency': 0,
                 'automatic_disabled': 1, 'adaptive': 0,
-                'incremental': int(mode == 'mprotect'),
-                'actual_vdb': int(mode == 'mprotect')}
+                'incremental': int(mode != 'ordinary'),
+                'actual_vdb': int(mode != 'ordinary')}
     for key, value in expected.items():
         if audit[key] != value:
             raise RuntimeError(f'{mode} control mismatch: {audit}')
@@ -165,7 +165,8 @@ def run_cost_experiment():
                GC_INCREMENTAL_START_THRESHOLD='10M', ESCARGOT_GC_TIME_UNLIMITED='1',
                ESCARGOT_GC_FULL_EVERY_COLLECTION='1', ESCARGOT_GC_DISABLE_AUTOMATIC='1',
                ESCARGOT_GC_COST_AUDIT='1', LC_ALL='C.UTF-8', LANG='C.UTF-8')
-    modes = [('ordinary', command), ('mprotect', [*command, '--gc-incremental'])]
+    modes = [('ordinary', command), ('mprotect', [*command, '--gc-incremental']),
+             ('coarse', [*command, '--gc-incremental'])]
     data = {'architecture': architecture, 'local_smoke': smoke, 'host': platform.node(),
             'vm_max_map_count': int(Path('/proc/sys/vm/max_map_count').read_text()),
             'compiled_vma_soft_limit': 250000,
@@ -173,18 +174,19 @@ def run_cost_experiment():
                 'automatic_gc': False, 'time_limit': 999999, 'full_frequency': 0,
                 'free_space_divisor': 12, 'incremental_start_threshold': '10M',
                 'work_iterations': 3, 'perf_and_memory_separate': True,
-                'memory_interval_ms': 250}, 'perf': [], 'memory': [], 'probes': {}}
+                'memory_interval_ms': 250, 'coarse_min_protection_bytes': 65536}, 'perf': [], 'memory': [], 'probes': {}}
     for mode, args in modes:
         probe = subprocess.run(['taskset', '-c', str(cpu), *args, '-e',
                                 'var a=[]; for(var i=0;i<500000;i++) a.push({x:i}); gc(); gc(); print(a.length);'],
-                               env={**env, 'GC_PRINT_VERBOSE_STATS': '1'}, capture_output=True, text=True)
+                               env={**env, 'GC_MPROTECT_COARSE': str(int(mode == 'coarse')),
+                                    'GC_PRINT_VERBOSE_STATS': '1'}, capture_output=True, text=True)
         text = probe.stdout + probe.stderr
         (out / f'{mode}-full-gc-probe.log').write_text(text)
         if probe.returncode:
             raise RuntimeError(f'{mode} probe failed: {text[-2000:]}')
         audit = json_line('GC_COST_AUDIT', text)
         expected = {'time_limit': 999999, 'full_frequency': 0, 'automatic_disabled': 1,
-                    'adaptive': 0, 'incremental': int(mode == 'mprotect'), 'actual_vdb': int(mode == 'mprotect')}
+                    'adaptive': 0, 'incremental': int(mode != 'ordinary'), 'actual_vdb': int(mode != 'ordinary')}
         if any(audit[k] != v for k, v in expected.items()):
             raise RuntimeError(f'Unmatched probe controls: {audit}')
         full_count = text.count('Initiating full world-stop collection!')
@@ -209,7 +211,8 @@ def run_cost_experiment():
         for mode, args in (modes if rep % 2 == 0 else modes[::-1]):
             for suite, (directory, _, script) in fixtures.items():
                 label = f'perf-{suite}-{mode}-{rep}'
-                values, text = timed_run(label, args, directory, env, script, out, cpu)
+                mode_env = {**env, 'GC_MPROTECT_COARSE': str(int(mode == 'coarse'))}
+                values, text = timed_run(label, args, directory, mode_env, script, out, cpu)
                 data['perf'].append({'suite': suite, 'mode': mode, 'rep': rep,
                                      **values, **validate_output(mode, text)})
                 check_pair(data['perf'])
@@ -232,7 +235,8 @@ def run_cost_experiment():
             for mode, args in (modes if rep % 2 == 0 else modes[::-1]):
                 for suite, (directory, script, _) in fixtures.items():
                     label = f'memory-{suite}-{mode}-{rep}'
-                    result = memory.measure_memory(label, 'escargot', args, directory, env,
+                    mode_env = {**env, 'GC_MPROTECT_COARSE': str(int(mode == 'coarse'))}
+                    result = memory.measure_memory(label, 'escargot', args, directory, mode_env,
                                                    script, out, cpu, monitor_cpu)
                     result['sampling_interval_ms'] = 250
                     text = (out / result['log']).read_text()
@@ -244,10 +248,12 @@ def run_cost_experiment():
     write_json(out / 'measurements.json', data)
     for suite in fixtures:
         ordinary = [row for row in data['perf'] if row['suite'] == suite and row['mode'] == 'ordinary']
-        protected = [row for row in data['perf'] if row['suite'] == suite and row['mode'] == 'mprotect']
         base = statistics.median(row['cycles:u'] + row['cycles:k'] for row in ordinary)
-        current = statistics.median(row['cycles:u'] + row['cycles:k'] for row in protected)
-        print('MATCHED_COST_RESULT', suite, f'CPU overhead {(current/base-1)*100:.3f}%', flush=True)
+        for mode in ('mprotect', 'coarse'):
+            protected = [row for row in data['perf'] if row['suite'] == suite and row['mode'] == mode]
+            current = statistics.median(row['cycles:u'] + row['cycles:k'] for row in protected)
+            print('MATCHED_COST_RESULT', suite, mode, f'CPU overhead {(current/base-1)*100:.3f}%', flush=True)
+
 
 
 def main():
