@@ -107,7 +107,7 @@ void Heap::initializeCompressedType(CompressedType type, size_t size,
 
 #endif
 
-void Heap::initialize()
+void Heap::initialize(bool preferIncremental)
 {
 #if defined(ESCARGOT_USE_32BIT_IN_64BIT)
     for (auto& descriptor : s_compressedDescriptors) {
@@ -144,6 +144,11 @@ void Heap::initialize()
         RELEASE_ASSERT(prctl(PR_SET_NAME, "valgrind", 0UL, 0UL, 0UL) == 0);
     }
 #endif
+    // Request incremental collection before creating this thread's heap.
+    // A process-wide environment variable would affect other GC instances.
+    if (preferIncremental) {
+        GC_enable_incremental();
+    }
     GC_init();
 #if defined(__tizen__) || defined(__TIZEN__) || defined(ESCARGOT_TIZEN) || defined(ESCARGOT_TIZEN_MAJOR_VERSION)
     if (restoreThreadName) {
