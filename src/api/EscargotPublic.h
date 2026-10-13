@@ -144,6 +144,8 @@ public:
         None = 0,
         // Prefer using incremental garbage collection if the GC supports it.
         PreferIncrementalGC = 1 << 0,
+        // Prefer incremental GC with adaptive allocation/dirty-page scheduling.
+        PreferAdaptiveIncrementalGC = 1 << 1,
     };
 
     friend inline InitializeOption operator|(InitializeOption a, InitializeOption b)
