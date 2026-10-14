@@ -550,11 +550,46 @@ void ThreadLocal::initializeTlsKeySlotOffsets()
 }
 #endif
 
+#if defined(OS_POSIX)
+struct SavedGCPolicy {
+    int rate;
+    unsigned long timeLimit;
+    int fullFrequency;
+    int maxPriorAttempts;
+};
+static MAY_THREAD_LOCAL SavedGCPolicy g_savedGCPolicy;
+static MAY_THREAD_LOCAL bool g_hasSavedGCPolicy = false;
+
+static void restoreGcFlags()
+{
+    if (g_hasSavedGCPolicy) {
+        GC_set_rate(g_savedGCPolicy.rate);
+        GC_set_time_limit(g_savedGCPolicy.timeLimit);
+        GC_set_full_freq(g_savedGCPolicy.fullFrequency);
+        GC_set_max_prior_attempts(g_savedGCPolicy.maxPriorAttempts);
+        GC_set_adaptive_incremental(false);
+        g_hasSavedGCPolicy = false;
+    }
+}
+#endif
+
 static void initGcFlags(Globals::InitializeOption optionFromGlobal)
 {
 #if defined(OS_POSIX)
-    if (static_cast<uint32_t>(optionFromGlobal & Globals::InitializeOption::PreferIncrementalGC)) {
-        setenv("GC_ENABLE_INCREMENTAL", "1", 1);
+    bool adaptive = static_cast<uint32_t>(optionFromGlobal
+                                          & Globals::InitializeOption::PreferAdaptiveIncrementalGC);
+    GC_set_adaptive_incremental(adaptive);
+    if (adaptive) {
+        // GC_init can override these controls after the adaptive defaults.
+        // Ask the collector for its configured baseline, including only the
+        // environment settings supported by its own build configuration.
+        g_savedGCPolicy = { GC_get_rate(), GC_get_time_limit_for_init(),
+                            GC_get_full_freq_for_init(), GC_get_max_prior_attempts() };
+        g_hasSavedGCPolicy = true;
+        GC_set_rate(30);
+        GC_set_time_limit(15);
+        GC_set_full_freq(8);
+        GC_set_max_prior_attempts(8);
     }
 #endif
 }
@@ -572,7 +607,13 @@ void ThreadLocal::initialize(uint32_t optionFromGlobal)
     }
 #endif
     // Heap is initialized for each thread
-    Heap::initialize();
+    bool preferIncremental = false;
+#if defined(OS_POSIX)
+    preferIncremental = optionFromGlobal
+                        & static_cast<uint32_t>(Globals::InitializeOption::PreferIncrementalGC
+                                                | Globals::InitializeOption::PreferAdaptiveIncrementalGC);
+#endif
+    Heap::initialize(preferIncremental);
 #if defined(ESCARGOT_USE_32BIT_IN_64BIT)
     g_cageBase = GC_get_cage_base();
     ESCARGOT_RELEASE_ASSERT(g_cageBase && !(g_cageBase & 0xffffffffULL));
@@ -726,9 +767,9 @@ void ThreadLocal::initialize(uint32_t optionFromGlobal)
     GC_set_on_collection_event(genericGCEventListener);
     g_previousMarkStackEmptyListener = GC_get_on_mark_stack_empty();
     GC_set_on_mark_stack_empty(genericGCMarkStackEmptyListener);
-    if (GC_is_incremental_mode()) {
-        GC_set_start_callback(genericGCFullGCStartCallback);
-    }
+    // Incremental collection can start after ordinary full collections.
+    // Register full-mark notifications before either collection mode runs.
+    GC_set_start_callback(genericGCFullGCStartCallback);
 
     // g_astAllocator
     g_astAllocator = new ASTAllocator();
@@ -795,9 +836,7 @@ void ThreadLocal::finalize()
     GC_set_on_collection_event(nullptr);
     GC_set_on_mark_stack_empty(g_previousMarkStackEmptyListener);
     g_previousMarkStackEmptyListener = nullptr;
-    if (GC_is_incremental_mode()) {
-        GC_set_start_callback(nullptr);
-    }
+    GC_set_start_callback(nullptr);
 
     // g_astAllocator
     delete g_astAllocator;
@@ -809,6 +848,10 @@ void ThreadLocal::finalize()
 
     // g_gcEpoch
     g_gcEpoch = 0;
+
+#if defined(OS_POSIX)
+    restoreGcFlags();
+#endif
 
 #if defined(ESCARGOT_USE_32BIT_IN_64BIT)
 #if defined(ENABLE_TLS_ACCESS_BY_PTHREAD_KEY)
