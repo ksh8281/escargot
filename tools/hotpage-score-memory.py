@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import re
+import subprocess
 
 
 def main():
@@ -53,4 +54,25 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    original_limit = int(Path('/proc/sys/vm/max_map_count').read_text())
+    required_limit = 1000000
+    changed = original_limit < required_limit
+    report = Path(os.environ['BENCHMARK_OUTPUT_DIR'])
+    arch = os.environ['BENCHMARK_ARCHITECTURE']
+    budget = {'original_vm_max_map_count': original_limit,
+              'compiled_gc_soft_limit': 250000, 'changed': changed}
+    try:
+        if changed:
+            subprocess.run(['sudo', '-n', 'sysctl', '-w',
+                            'vm.max_map_count=' + str(required_limit)], check=True)
+        budget['effective_vm_max_map_count'] = int(Path('/proc/sys/vm/max_map_count').read_text())
+        assert budget['effective_vm_max_map_count'] >= required_limit
+        (report / f'mapping-budget-{arch}.json').write_text(json.dumps(budget, indent=2) + '\n')
+        main()
+    finally:
+        if changed:
+            subprocess.run(['sudo', '-n', 'sysctl', '-w',
+                            'vm.max_map_count=' + str(original_limit)], check=True)
+        budget['restored_vm_max_map_count'] = int(Path('/proc/sys/vm/max_map_count').read_text())
+        (report / f'mapping-budget-{arch}.json').write_text(json.dumps(budget, indent=2) + '\n')
+        print('MAPPING_BUDGET', json.dumps(budget), flush=True)
