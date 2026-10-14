@@ -146,6 +146,12 @@ void Heap::initialize(bool preferIncremental)
 #endif
     // Request incremental collection before creating this thread's heap.
     // A process-wide environment variable would affect other GC instances.
+    if (getenv("ESCARGOT_GC_TIME_UNLIMITED")) {
+        GC_set_time_limit(GC_TIME_UNLIMITED);
+    }
+    if (getenv("ESCARGOT_GC_FULL_EVERY_COLLECTION")) {
+        GC_set_full_freq(0);
+    }
     if (preferIncremental) {
         GC_enable_incremental();
     }

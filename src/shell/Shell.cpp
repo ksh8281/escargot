@@ -1491,12 +1491,13 @@ static __attribute__((noinline)) int shellMain(int argc, char* argv[], void* tar
     }
 #endif
 
-    if (getenv("ESCARGOT_HOTPAGE_AUDIT")) {
-        fprintf(stderr, "HOTPAGE_AUDIT {\"time_limit\":%lu,\"full_frequency\":%d,\"automatic_disabled\":%d,\"adaptive\":%d,\"incremental\":%d,\"actual_vdb\":%u,\"collections\":%lu}\n",
+    if (getenv("ESCARGOT_FULLGC_AUDIT")) {
+        fprintf(stderr, "FULLGC_AUDIT {\"time_limit\":%lu,\"full_frequency\":%d,\"automatic_disabled\":%d,\"adaptive\":%d,\"incremental\":%d,\"actual_vdb\":%u,\"collections\":%lu,\"partial_collections\":%lu}\n",
                 GC_get_time_limit(), GC_get_full_freq(),
                 GC_get_disable_automatic_collection(), GC_get_adaptive_incremental(),
                 GC_is_incremental_mode(), GC_get_actual_vdb(),
-                static_cast<unsigned long>(GC_get_gc_no()));
+                static_cast<unsigned long>(GC_get_gc_no()),
+                static_cast<unsigned long>(GC_get_benchmark_partial_gc_count()));
     }
 
     context.release();
