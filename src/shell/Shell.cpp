@@ -248,6 +248,21 @@ static bool stringEndsWith(const std::string& str, const std::string& suffix)
     return str.size() >= suffix.size() && 0 == str.compare(str.size() - suffix.size(), suffix.size(), suffix);
 }
 
+static void printFullGCPhase(const std::string& message)
+{
+    if (getenv("ESCARGOT_FULLGC_PHASE_AUDIT") && message.compare(0, 9, "GC_PHASE ") == 0) {
+        GC_start_performance_measurement();
+        auto now = std::chrono::steady_clock::now().time_since_epoch();
+        auto nanoseconds = std::chrono::duration_cast<std::chrono::nanoseconds>(now).count();
+        fprintf(stderr, "GC_PHASE_AUDIT {\"label\":\"%s\",\"wall_ns\":%llu,\"gc_count\":%lu,\"full_gc_ns\":%llu,\"stopped_mark_ms\":%lu,\"heap_bytes\":%lu,\"free_bytes\":%lu,\"actual_vdb\":%u}\n",
+                message.c_str() + 9, static_cast<unsigned long long>(nanoseconds),
+                static_cast<unsigned long>(GC_get_gc_no()),
+                static_cast<unsigned long long>(GC_get_full_gc_total_time()) * 1000000 + GC_get_full_gc_total_ns_frac(),
+                GC_get_stopped_mark_total_time(),
+                static_cast<unsigned long>(GC_get_heap_size()), static_cast<unsigned long>(GC_get_free_bytes()), GC_get_actual_vdb());
+    }
+}
+
 ValueRef* builtinPrint(ExecutionStateRef* state, ValueRef* thisValue, size_t argc, ValueRef** argv, bool isConstructCall)
 {
     if (argc >= 1) {
@@ -258,7 +273,9 @@ ValueRef* builtinPrint(ExecutionStateRef* state, ValueRef* thisValue, size_t arg
             state->context()->printDebugger(printMsg);
         } else {
             printMsg = argv[0]->toString(state);
-            puts(printMsg->toStdUTF8String().data());
+            auto message = printMsg->toStdUTF8String();
+            printFullGCPhase(message);
+            puts(message.data());
             state->context()->printDebugger(printMsg->toString(state));
         }
     } else {
