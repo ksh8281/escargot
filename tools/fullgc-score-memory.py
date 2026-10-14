@@ -45,7 +45,7 @@ def main():
                     assert name == bridge == 'escargot'
                     command.append('--gc-incremental')
                     data['engines'][name]['command'] = command
-            return original_scores(monthly, engines, harness, wtb, report, data, repetitions)
+            return focused_scores(experiment, monthly, engines, wtb, report, data, repetitions)
 
         experiment.write_results = write_results
         experiment.run_scores = run_scores
@@ -80,14 +80,33 @@ def main():
         assert summaries['ordinary']['memory'][suite]['work_signature'] == summaries['current']['memory'][suite]['work_signature']
     (root / f'fullgc-comparison-{architecture}.json').write_text(json.dumps(summaries, indent=2) + '\n')
     os.environ['BENCHMARK_OUTPUT_DIR'] = str(root)
-    run_fixed_cost(root, harness, architecture)
+    run_fixed_cost(root, harness, architecture, data['engines']['escargot']['command'])
 
 
-def run_fixed_cost(root, harness, architecture):
-    if architecture != 'arm32':
-        return
+def focused_scores(experiment, monthly, engines, wtb, report, data, repetitions):
+    data['score_protocol'] = 'Monthly Web Tooling driver; fresh CPU-pinned processes'
+    for name, command, _ in engines:
+        result = data['engines'][name].setdefault('scores', {}).setdefault(
+            'web_tooling', {'metric': 'score_runs_per_second', 'samples': []})
+        for repetition in range(repetitions):
+            label = f'{name}-web_tooling-{data["architecture"]}-score-{repetition + 1}'
+            sample = monthly.measure(label, command, wtb, os.environ, script='dist/cli.js', kind='web_tooling')
+            result['samples'].append(sample)
+            import statistics
+            result['value'] = statistics.median(s['score_runs_per_second'] for s in result['samples'])
+            print(label + ': score_runs_per_second = ' + str(sample['score_runs_per_second']), flush=True)
+            experiment.write_results(report, data)
+    data['scores_validated'] = True
+    data['failures'] = []
+    original_drivers = monthly.build_memory_drivers
+    def drivers(bundle):
+        return {'web_tooling': original_drivers(bundle)['web_tooling']}
+    monthly.build_memory_drivers = drivers
+
+
+def run_fixed_cost(root, harness, architecture, engine_command):
     import statistics
-    directory = root / 'fixed-fullgc-cost-arm32'
+    directory = root / ('fixed-fullgc-cost-' + architecture)
     directory.mkdir(parents=True, exist_ok=True)
     spec = importlib.util.spec_from_file_location('fullgc_cost',
                                                 Path(__file__).with_name('fullgc-cost-helpers.py'))
@@ -96,7 +115,7 @@ def run_fixed_cost(root, harness, architecture):
     fixtures = cost.drivers(harness, directory)
     environment = dict(os.environ, ESCARGOT_GC_DISABLE_AUTOMATIC='1')
     cpu = int(os.environ['BENCHMARK_CPU'])
-    command = [os.environ['ESCARGOT_ENGINE']]
+    command = [argument for argument in engine_command if argument != '--gc-incremental']
     modes = [('ordinary', command), ('mprotect', [*command, '--gc-incremental'])]
     rows = []
     saved_paranoid = int(Path('/proc/sys/kernel/perf_event_paranoid').read_text())
