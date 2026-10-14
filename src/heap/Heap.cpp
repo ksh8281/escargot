@@ -152,6 +152,9 @@ void Heap::initialize(bool preferIncremental)
     if (getenv("ESCARGOT_GC_FULL_EVERY_COLLECTION")) {
         GC_set_full_freq(0);
     }
+    if (getenv("ESCARGOT_GC_DISABLE_AUTOMATIC")) {
+        GC_set_disable_automatic_collection(1);
+    }
     if (preferIncremental) {
         GC_enable_incremental();
     }

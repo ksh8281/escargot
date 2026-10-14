@@ -80,6 +80,58 @@ def main():
         assert summaries['ordinary']['memory'][suite]['work_signature'] == summaries['current']['memory'][suite]['work_signature']
     (root / f'fullgc-comparison-{architecture}.json').write_text(json.dumps(summaries, indent=2) + '\n')
     os.environ['BENCHMARK_OUTPUT_DIR'] = str(root)
+    run_fixed_cost(root, harness, architecture)
+
+
+def run_fixed_cost(root, harness, architecture):
+    if architecture != 'arm32':
+        return
+    import statistics
+    directory = root / 'fixed-fullgc-cost-arm32'
+    directory.mkdir(parents=True, exist_ok=True)
+    spec = importlib.util.spec_from_file_location('fullgc_cost',
+                                                Path(__file__).with_name('fullgc-cost-helpers.py'))
+    cost = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(cost)
+    fixtures = cost.drivers(harness, directory)
+    environment = dict(os.environ, ESCARGOT_GC_DISABLE_AUTOMATIC='1')
+    cpu = int(os.environ['BENCHMARK_CPU'])
+    command = [os.environ['ESCARGOT_ENGINE']]
+    modes = [('ordinary', command), ('mprotect', [*command, '--gc-incremental'])]
+    rows = []
+    saved_paranoid = int(Path('/proc/sys/kernel/perf_event_paranoid').read_text())
+    changed = saved_paranoid > 0
+    try:
+        if changed:
+            subprocess.run(['sudo', '-n', 'sysctl', '-w', 'kernel.perf_event_paranoid=0'], check=True)
+        for repetition in range(3):
+            for mode, args in (modes if repetition % 2 == 0 else modes[::-1]):
+                for suite in ('web_tooling',):
+                    cwd, _, script = fixtures[suite]
+                    values, output = cost.timed_run(f'{suite}-{mode}-{repetition}', args, cwd,
+                                                   environment, script, directory, cpu)
+                    audit = cost.validate_output(mode, output)
+                    assert audit['gc_audit']['partial_collections'] == 0, audit
+                    for previous in rows:
+                        assert previous['work_counts'] == audit['work_counts']
+                        assert previous['gc_calls'] == audit['gc_calls']
+                        assert previous['gc_audit']['collections'] == audit['gc_audit']['collections']
+                    rows.append({'mode': mode, 'suite': suite, 'repetition': repetition, **values, **audit})
+                    (directory / 'measurements.json').write_text(json.dumps(rows, indent=2) + '\n')
+            medians = {mode: statistics.median(row['cycles:u'] + row['cycles:k']
+                                             for row in rows if row['mode'] == mode)
+                       for mode, _ in modes}
+            result = {'repetitions': repetition + 1, 'median_cycles': medians,
+                      'overhead_percent': (medians['mprotect'] / medians['ordinary'] - 1) * 100}
+            (directory / 'summary.json').write_text(json.dumps(result, indent=2) + '\n')
+            print('FIXED_FULLGC_COST', json.dumps(result), flush=True)
+    finally:
+        if changed:
+            subprocess.run(['sudo', '-n', 'sysctl', '-w',
+                            'kernel.perf_event_paranoid=' + str(saved_paranoid)], check=True)
+        (directory / 'perf-permissions.json').write_text(json.dumps({
+            'original': saved_paranoid,
+            'restored': int(Path('/proc/sys/kernel/perf_event_paranoid').read_text())}, indent=2) + '\n')
 
 
 if __name__ == '__main__':
