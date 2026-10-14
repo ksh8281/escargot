@@ -35,7 +35,7 @@ def main():
 
         def write_results(report, data):
             if 'protocol' in data:
-                data['protocol']['gc_policy'] = 'Automatic full GC only; no marking time limit; matched allocation budget'
+                data['protocol']['gc_policy'] = 'Ordinary synchronous full-GC allocation, heap splitting, and triggers; VDB toggled independently'
                 data['protocol']['vdb_mode'] = mode
             original_write(report, data)
 
