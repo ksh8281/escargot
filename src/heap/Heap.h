@@ -155,7 +155,7 @@ private:
 
 public:
 #endif
-    static void initialize();
+    static void initialize(bool preferIncremental = false);
     static void finalize();
     static void printGCHeapUsage();
 };

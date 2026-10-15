@@ -554,21 +554,10 @@ void ThreadLocal::initializeTlsKeySlotOffsets()
 }
 #endif
 
-static void initGcFlags(Globals::InitializeOption optionFromGlobal)
-{
-#if defined(OS_POSIX)
-    if (static_cast<uint32_t>(optionFromGlobal & Globals::InitializeOption::PreferIncrementalGC)) {
-        setenv("GC_ENABLE_INCREMENTAL", "1", 1);
-    }
-#endif
-}
-
 void ThreadLocal::initialize(uint32_t optionFromGlobal)
 {
     // initialize should be invoked only once in each thread
     ESCARGOT_RELEASE_ASSERT(!inited);
-
-    initGcFlags(static_cast<Globals::InitializeOption>(optionFromGlobal));
 
 #if defined(ENABLE_THREADING)
     if (!g_globalDeleteChecker) {
@@ -576,7 +565,11 @@ void ThreadLocal::initialize(uint32_t optionFromGlobal)
     }
 #endif
     // Heap is initialized for each thread
-    Heap::initialize();
+    bool preferIncremental = false;
+#if defined(OS_POSIX)
+    preferIncremental = optionFromGlobal & static_cast<uint32_t>(Globals::InitializeOption::PreferIncrementalGC);
+#endif
+    Heap::initialize(preferIncremental);
 #if defined(ESCARGOT_USE_32BIT_IN_64BIT)
     g_cageBase = GC_get_cage_base();
     ESCARGOT_RELEASE_ASSERT(g_cageBase && !(g_cageBase & 0xffffffffULL));
@@ -730,9 +723,9 @@ void ThreadLocal::initialize(uint32_t optionFromGlobal)
     GC_set_on_collection_event(genericGCEventListener);
     g_previousMarkStackEmptyListener = GC_get_on_mark_stack_empty();
     GC_set_on_mark_stack_empty(genericGCMarkStackEmptyListener);
-    if (GC_is_incremental_mode()) {
-        GC_set_start_callback(genericGCFullGCStartCallback);
-    }
+    // Incremental collection can start after ordinary full collections.
+    // Register full-mark notifications before either collection mode runs.
+    GC_set_start_callback(genericGCFullGCStartCallback);
 
     // g_astAllocator
     g_astAllocator = new ASTAllocator();
@@ -814,9 +807,7 @@ void ThreadLocal::finalize()
     GC_set_on_collection_event(nullptr);
     GC_set_on_mark_stack_empty(g_previousMarkStackEmptyListener);
     g_previousMarkStackEmptyListener = nullptr;
-    if (GC_is_incremental_mode()) {
-        GC_set_start_callback(nullptr);
-    }
+    GC_set_start_callback(nullptr);
 
     // g_astAllocator
     delete g_astAllocator;
