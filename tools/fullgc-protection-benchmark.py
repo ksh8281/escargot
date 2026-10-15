@@ -12,7 +12,7 @@ import statistics
 import subprocess
 import sys
 
-BEFORE = '5414316da9faab15dc5edb1902a52ca2a9a51069'
+BEFORE = '19f8935220ef44a992b632b3c47a4b8ce670ad01'
 
 def write_json(path, data):
     path.write_text(json.dumps(data, indent=2) + '\n')
@@ -194,7 +194,7 @@ def compare(monthly, engines, harness, wtb, report, data, repetitions):
     modes = [('ordinary', old, False), ('before', [*old,'--gc-incremental'],True), ('after',[*command,'--gc-incremental'],True)]
     summary = {mode:{'score_samples':[],'memory_samples':[]} for mode,_,_ in modes}
     data['protocol'].update(gc_policy='Automatic synchronous full GC in every mode',
-        comparison='Previous VDB off, previous header traversal, incremental eligibility bitmap; unchanged grace policy',
+        comparison='VDB off, byte permission scans, word permission scans and cached section lookup; unchanged grace policy',
         score_repetitions=3, memory_repetitions=1, score_order='Cyclic rotation across modes')
     for rep in range(3):
         for mode,args,enabled in modes[rep:]+modes[:rep]:
