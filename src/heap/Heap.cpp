@@ -107,7 +107,7 @@ void Heap::initializeCompressedType(CompressedType type, size_t size,
 
 #endif
 
-void Heap::initialize(bool preferIncremental)
+void Heap::initialize(bool preferIncremental, bool trackDirtyPages)
 {
 #if defined(ESCARGOT_USE_32BIT_IN_64BIT)
     for (auto& descriptor : s_compressedDescriptors) {
@@ -146,7 +146,9 @@ void Heap::initialize(bool preferIncremental)
 #endif
     // Configure dirty tracking before creating this thread's heap.
     // A process-wide environment variable would affect other GC instances.
-    if (preferIncremental) {
+    if (trackDirtyPages) {
+        GC_enable_dirty_tracking(10 * 1024 * 1024);
+    } else if (preferIncremental) {
         GC_enable_incremental();
     }
     GC_init();

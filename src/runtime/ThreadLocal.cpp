@@ -554,10 +554,41 @@ void ThreadLocal::initializeTlsKeySlotOffsets()
 }
 #endif
 
+#if defined(OS_POSIX)
+struct SavedGCPolicy {
+    unsigned long timeLimit;
+    int fullFrequency;
+};
+static MAY_THREAD_LOCAL SavedGCPolicy g_savedGCPolicy;
+static MAY_THREAD_LOCAL bool g_hasSavedGCPolicy = false;
+
+static void restoreGcFlags()
+{
+    if (g_hasSavedGCPolicy) {
+        GC_set_time_limit(g_savedGCPolicy.timeLimit);
+        GC_set_full_freq(g_savedGCPolicy.fullFrequency);
+        g_hasSavedGCPolicy = false;
+    }
+}
+#endif
+
+static void initGcFlags(Globals::InitializeOption optionFromGlobal)
+{
+#if defined(OS_POSIX)
+    if (static_cast<uint32_t>(optionFromGlobal & Globals::InitializeOption::TrackDirtyPages)) {
+        // Preserve the configured policy across thread-local GC lifetimes.
+        g_savedGCPolicy = { GC_get_time_limit_for_init(), GC_get_full_freq_for_init() };
+        g_hasSavedGCPolicy = true;
+    }
+#endif
+}
+
 void ThreadLocal::initialize(uint32_t optionFromGlobal)
 {
     // initialize should be invoked only once in each thread
     ESCARGOT_RELEASE_ASSERT(!inited);
+
+    initGcFlags(static_cast<Globals::InitializeOption>(optionFromGlobal));
 
 #if defined(ENABLE_THREADING)
     if (!g_globalDeleteChecker) {
@@ -566,10 +597,12 @@ void ThreadLocal::initialize(uint32_t optionFromGlobal)
 #endif
     // Heap is initialized for each thread
     bool preferIncremental = false;
+    bool trackDirtyPages = false;
 #if defined(OS_POSIX)
     preferIncremental = optionFromGlobal & static_cast<uint32_t>(Globals::InitializeOption::PreferIncrementalGC);
+    trackDirtyPages = optionFromGlobal & static_cast<uint32_t>(Globals::InitializeOption::TrackDirtyPages);
 #endif
-    Heap::initialize(preferIncremental);
+    Heap::initialize(preferIncremental, trackDirtyPages);
 #if defined(ESCARGOT_USE_32BIT_IN_64BIT)
     g_cageBase = GC_get_cage_base();
     ESCARGOT_RELEASE_ASSERT(g_cageBase && !(g_cageBase & 0xffffffffULL));
@@ -819,6 +852,10 @@ void ThreadLocal::finalize()
 
     // g_gcEpoch
     g_gcEpoch = 0;
+
+#if defined(OS_POSIX)
+    restoreGcFlags();
+#endif
 
 #if defined(ESCARGOT_USE_32BIT_IN_64BIT)
 #if defined(ENABLE_TLS_ACCESS_BY_PTHREAD_KEY)
