@@ -12,7 +12,7 @@ import statistics
 import subprocess
 import sys
 
-BEFORE = '68657976a874322d754ca92e1b593369bbcf2bd6'
+BEFORE = '5414316da9faab15dc5edb1902a52ca2a9a51069'
 
 def write_json(path, data):
     path.write_text(json.dumps(data, indent=2) + '\n')
@@ -66,33 +66,34 @@ def build_control(report, engine, mode, profile=False):
     build = engine.parent
     commands = subprocess.check_output(['ninja', '-t', 'commands', 'escargot'], cwd=build, text=True).splitlines()
     gc = Path(__file__).resolve().parent.parent / 'third_party/GCutil'
-    source_text = (subprocess.check_output(['git', 'show', BEFORE + ':os_dep.c'], cwd=gc, text=True)
-                   if mode == 'before' else (gc / 'os_dep.c').read_text())
-    if profile:
-        source_text = instrument(source_text)
     directory = report / (mode + ('-profile' if profile else '-control'))
     directory.mkdir(exist_ok=True)
-    source = directory / 'os_dep.c'; source.write_text(source_text)
-    raw = shlex.split(next(line for line in commands if ' -c ' in line and '/GCutil/os_dep.c' in line))
-    args = [raw[0]]
-    i = 1
-    while i < len(raw):
-        if raw[i] in ('-o', '-MF', '-MT'): i += 2
-        elif raw[i] == '-MD': i += 1
-        else: args.append(raw[i]); i += 1
-    args[-1] = str(source)
-    obj = directory / 'os_dep.o'
-    args += ['-o', str(obj)]
-    subprocess.run(args, cwd=build, check=True)
+    objects, compile_commands = [], []
+    # The allocation/free hooks and the bitmap implementation are paired.
+    for unit in ('os_dep', 'allchblk'):
+        source_text = (subprocess.check_output(['git', 'show', BEFORE + ':' + unit + '.c'], cwd=gc, text=True)
+                       if mode == 'before' else (gc / (unit + '.c')).read_text())
+        if profile and unit == 'os_dep':
+            source_text = instrument(source_text)
+        source = directory / (unit + '.c'); source.write_text(source_text)
+        raw = shlex.split(next(line for line in commands if ' -c ' in line and '/GCutil/' + unit + '.c' in line))
+        args, i = [raw[0]], 1
+        while i < len(raw):
+            if raw[i] in ('-o', '-MF', '-MT'): i += 2
+            elif raw[i] == '-MD': i += 1
+            else: args.append(raw[i]); i += 1
+        args[-1] = str(source)
+        obj = directory / (unit + '.o'); args += ['-o', str(obj)]
+        subprocess.run(args, cwd=build, check=True)
+        objects.append(str(obj)); compile_commands.append(args)
     link = shlex.split(commands[-1].split(' && ')[1])
-    binary = directory / 'escargot'
-    link[link.index('-o') + 1] = str(binary)
+    binary = directory / 'escargot'; link[link.index('-o') + 1] = str(binary)
     archive = next(i for i, value in enumerate(link) if value.endswith('/libgc-lib.a'))
-    link.insert(archive, str(obj))
+    link[archive:archive] = objects
     subprocess.run(link, cwd=build, check=True)
     write_json(directory / 'control.json', {'before_gc': BEFORE, 'mode': mode, 'profiling': profile,
                'binary_sha256': hashlib.sha256(binary.read_bytes()).hexdigest(),
-               'compile_command': args, 'link_command': link})
+               'compile_commands': compile_commands, 'link_command': link})
     print('PROTECTION_CONTROL_BUILT', mode, profile, binary, flush=True)
     return binary
 
@@ -156,7 +157,7 @@ def fixed_cost(report, command, engine, before, harness, cpu):
     cwd, _, script = cost.drivers(harness, directory)['web_tooling']
     env = dict(os.environ, ESCARGOT_GC_DISABLE_AUTOMATIC='1')
     old = [str(before) if value == engine else value for value in command]
-    modes = [('ordinary', command), ('before', [*old, '--gc-incremental']), ('after', [*command, '--gc-incremental'])]
+    modes = [('ordinary', old), ('ordinary_after', command), ('before', [*old, '--gc-incremental']), ('after', [*command, '--gc-incremental'])]
     rows = []
     saved = int(Path('/proc/sys/kernel/perf_event_paranoid').read_text())
     try:
@@ -165,7 +166,7 @@ def fixed_cost(report, command, engine, before, harness, cpu):
         for rep in range(3):
             for mode, args in modes[rep:] + modes[:rep]:
                 values, text = cost.timed_run(f'{mode}-{rep}', args, cwd, env, script, directory, cpu)
-                audit = cost.validate_output('ordinary' if mode == 'ordinary' else 'mprotect', text)
+                audit = cost.validate_output('ordinary' if mode.startswith('ordinary') else 'mprotect', text)
                 assert audit['gc_audit']['collections'] == 41, audit
                 if rows:
                     assert rows[0]['work_counts'] == audit['work_counts'] and rows[0]['gc_calls'] == audit['gc_calls']
@@ -174,7 +175,8 @@ def fixed_cost(report, command, engine, before, harness, cpu):
             medians = {mode: statistics.median(row['cycles:u'] + row['cycles:k'] for row in rows if row['mode'] == mode)
                        for mode, _ in modes}
             summary = {'repetitions': rep + 1, 'median_cycles': medians,
-                       'vdb_overhead_percent': {mode: 100*(medians[mode]/medians['ordinary']-1) for mode in ('before','after')}}
+                       'vdb_overhead_percent': {mode: 100*(medians[mode]/medians['ordinary']-1) for mode in ('before','after')},
+                       'ordinary_code_change_percent': 100*(medians['ordinary_after']/medians['ordinary']-1)}
             write_json(directory / 'summary.json', summary)
             print('PROTECTION_FIXED_COST', json.dumps(summary), flush=True)
     finally:
@@ -189,10 +191,10 @@ def compare(monthly, engines, harness, wtb, report, data, repetitions):
     engine = os.environ['ESCARGOT_ENGINE']
     before = build_control(report, engine, 'before')
     old = [str(before) if value == engine else value for value in command]
-    modes = [('ordinary', command, False), ('before', [*old,'--gc-incremental'],True), ('after',[*command,'--gc-incremental'],True)]
+    modes = [('ordinary', old, False), ('before', [*old,'--gc-incremental'],True), ('after',[*command,'--gc-incremental'],True)]
     summary = {mode:{'score_samples':[],'memory_samples':[]} for mode,_,_ in modes}
     data['protocol'].update(gc_policy='Automatic synchronous full GC in every mode',
-        comparison='VDB off, eager preparation, lazy preparation; unchanged grace policy',
+        comparison='Previous VDB off, previous header traversal, incremental eligibility bitmap; unchanged grace policy',
         score_repetitions=3, memory_repetitions=1, score_order='Cyclic rotation across modes')
     for rep in range(3):
         for mode,args,enabled in modes[rep:]+modes[:rep]:
@@ -223,7 +225,7 @@ def compare(monthly, engines, harness, wtb, report, data, repetitions):
     fixed_cost(report,command,engine,before,harness,data['cpu'])
 
 def main():
-    for key in ('GC_ENABLE_INCREMENTAL','GC_DISABLE_INCREMENTAL','GC_PRINT_STATS','GC_PRINT_VERBOSE_STATS','GC_PROFILE_MPROTECT','GC_FULL_FREQUENCY','GC_PAUSE_TIME_TARGET','ESCARGOT_GC_DISABLE_AUTOMATIC'):
+    for key in ('GC_ENABLE_INCREMENTAL','GC_DISABLE_INCREMENTAL','GC_PRINT_STATS','GC_PRINT_VERBOSE_STATS','GC_PROFILE_MPROTECT','GC_FULL_FREQUENCY','GC_PAUSE_TIME_TARGET','ESCARGOT_GC_DISABLE_AUTOMATIC','GC_MPROTECT_VERIFY_ELIGIBILITY'):
         os.environ.pop(key,None)
     os.environ.update(GC_USE_GETWRITEWATCH='0',GC_FREE_SPACE_DIVISOR='12',GC_INCREMENTAL_START_THRESHOLD='10M',GC_MPROTECT_COARSE='1',ESCARGOT_GC_TIME_UNLIMITED='1',ESCARGOT_GC_FULL_EVERY_COLLECTION='1',ESCARGOT_FULLGC_AUDIT='1')
     harness=Path(os.environ['BENCHMARK_HARNESS'])
