@@ -279,7 +279,6 @@ void vmReclaimEndCallback(void* data)
         return;
     }
 
-    ThreadLocal::gcEpoch() = GC_get_gc_no();
     self->m_arrayBufferBytesSinceGC = 0;
 #if defined(ENABLE_COMPRESSIBLE_STRING)
     auto currentTick = fastTickCount();

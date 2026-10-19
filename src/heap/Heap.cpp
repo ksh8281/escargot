@@ -107,7 +107,7 @@ void Heap::initializeCompressedType(CompressedType type, size_t size,
 
 #endif
 
-void Heap::initialize(bool preferIncremental, bool trackDirtyPages)
+void Heap::initialize(bool preferIncremental, bool trackDirtyPages, bool preferGenerational)
 {
 #if defined(ESCARGOT_USE_32BIT_IN_64BIT)
     for (auto& descriptor : s_compressedDescriptors) {
@@ -148,6 +148,11 @@ void Heap::initialize(bool preferIncremental, bool trackDirtyPages)
     // A process-wide environment variable would affect other GC instances.
     if (trackDirtyPages) {
         GC_enable_dirty_tracking(10 * 1024 * 1024);
+    } else if (preferGenerational) {
+        // Start with ordinary full collections while the heap is small. Once
+        // tracking activates after a full mark, reuse BDWGC's sticky marks and
+        // dirty-page rescue, completing each collection with the world stopped.
+        GC_enable_generational(10 * 1024 * 1024);
     } else if (preferIncremental) {
         GC_enable_incremental();
     }

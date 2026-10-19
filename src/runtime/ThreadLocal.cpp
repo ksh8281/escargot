@@ -297,6 +297,13 @@ static void genericGCEventListener(GC_EventType evtType)
         listeners = list.reclaimStartListeners();
         break;
     case GC_EVENT_RECLAIM_END:
+        // Bytecode cache age advances once per completed full collection.
+        // BDWGC's sequence number includes minors, which would make cache
+        // age jump after a minor/full sequence. Advance here once for the
+        // thread, before dispatching to all VM instances sharing this heap.
+        if (list.isFullGCFlag() || !GC_is_incremental_mode()) {
+            ++ThreadLocal::gcEpoch();
+        }
         listeners = list.reclaimEndListeners();
         break;
     default:
@@ -575,7 +582,7 @@ static void restoreGcFlags()
 static void initGcFlags(Globals::InitializeOption optionFromGlobal)
 {
 #if defined(OS_POSIX)
-    if (static_cast<uint32_t>(optionFromGlobal & Globals::InitializeOption::TrackDirtyPages)) {
+    if (static_cast<uint32_t>(optionFromGlobal & (Globals::InitializeOption::TrackDirtyPages | Globals::InitializeOption::PreferGenerationalGC))) {
         // Preserve the configured policy across thread-local GC lifetimes.
         g_savedGCPolicy = { GC_get_time_limit_for_init(), GC_get_full_freq_for_init() };
         g_hasSavedGCPolicy = true;
@@ -598,11 +605,13 @@ void ThreadLocal::initialize(uint32_t optionFromGlobal)
     // Heap is initialized for each thread
     bool preferIncremental = false;
     bool trackDirtyPages = false;
+    bool preferGenerational = false;
 #if defined(OS_POSIX)
     preferIncremental = optionFromGlobal & static_cast<uint32_t>(Globals::InitializeOption::PreferIncrementalGC);
     trackDirtyPages = optionFromGlobal & static_cast<uint32_t>(Globals::InitializeOption::TrackDirtyPages);
+    preferGenerational = optionFromGlobal & static_cast<uint32_t>(Globals::InitializeOption::PreferGenerationalGC);
 #endif
-    Heap::initialize(preferIncremental, trackDirtyPages);
+    Heap::initialize(preferIncremental, trackDirtyPages, preferGenerational);
 #if defined(ESCARGOT_USE_32BIT_IN_64BIT)
     g_cageBase = GC_get_cage_base();
     ESCARGOT_RELEASE_ASSERT(g_cageBase && !(g_cageBase & 0xffffffffULL));
@@ -738,7 +747,12 @@ void ThreadLocal::initialize(uint32_t optionFromGlobal)
 #endif
 
     // g_randEngine
-    g_randEngine = new std::mt19937(static_cast<unsigned int>(time(NULL)));
+    unsigned int randomSeed = static_cast<unsigned int>(time(NULL));
+    Optional<const char*> seedSetting(getenv("ESCARGOT_BENCH_SEED"));
+    if (seedSetting) {
+        randomSeed = static_cast<unsigned int>(strtoul(seedSetting.value(), nullptr, 10));
+    }
+    g_randEngine = new std::mt19937(randomSeed);
 
     // g_bfContext
     bf_context_init(&g_bfContext, [](void* opaque, void* ptr, size_t size) -> void* { return realloc(ptr, size); }, nullptr);

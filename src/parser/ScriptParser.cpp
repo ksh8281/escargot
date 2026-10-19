@@ -516,10 +516,10 @@ ScriptParser::InitializeScriptResult ScriptParser::initializeScript(Optional<Str
             if (cacheable) {
                 codeCache->storeGlobalCache(m_context, cacheIndex, topCodeBlock, m_codeBlockCacheInfo, programNode, inWith);
             } else {
-                topCodeBlock->m_byteCodeBlock = ByteCodeGenerator::generateByteCode(m_context, topCodeBlock, programNode, inWith, false);
+                topCodeBlock->setByteCodeBlock(ByteCodeGenerator::generateByteCode(m_context, topCodeBlock, programNode, inWith, false));
             }
 #else
-            topCodeBlock->m_byteCodeBlock = ByteCodeGenerator::generateByteCode(m_context, topCodeBlock, programNode, inWith);
+            topCodeBlock->setByteCodeBlock(ByteCodeGenerator::generateByteCode(m_context, topCodeBlock, programNode, inWith));
 #endif
         } catch (const char* message) {
             m_context->astAllocator().reset();
@@ -608,10 +608,10 @@ void ScriptParser::generateFunctionByteCode(ExecutionState& state, InterpretedCo
         if (cacheable) {
             codeCache->storeFunctionCache(state.context(), cacheIndex, codeBlock, functionNode);
         } else {
-            codeBlock->m_byteCodeBlock = ByteCodeGenerator::generateByteCode(state.context(), codeBlock, functionNode);
+            codeBlock->setByteCodeBlock(ByteCodeGenerator::generateByteCode(state.context(), codeBlock, functionNode));
         }
 #else
-        codeBlock->m_byteCodeBlock = ByteCodeGenerator::generateByteCode(state.context(), codeBlock, functionNode);
+        codeBlock->setByteCodeBlock(ByteCodeGenerator::generateByteCode(state.context(), codeBlock, functionNode));
 #endif
     } catch (const char* message) {
         // reset ASTAllocator
@@ -662,7 +662,7 @@ void ScriptParser::recursivelyGenerateChildrenByteCode(InterpretedCodeBlock* par
 
         // Errors caught by the caller.
         FunctionNode* functionNode = esprima::parseSingleFunction(m_context, codeBlock);
-        codeBlock->m_byteCodeBlock = ByteCodeGenerator::generateByteCode(m_context, codeBlock, functionNode);
+        codeBlock->setByteCodeBlock(ByteCodeGenerator::generateByteCode(m_context, codeBlock, functionNode));
 
         m_context->astAllocator().reset();
     }
@@ -748,7 +748,7 @@ ScriptParser::InitializeScriptResult ScriptParser::initializeScriptWithDebugger(
 
     // Generate ByteCode
     try {
-        topCodeBlock->m_byteCodeBlock = ByteCodeGenerator::generateByteCode(m_context, topCodeBlock, programNode, inWith);
+        topCodeBlock->setByteCodeBlock(ByteCodeGenerator::generateByteCode(m_context, topCodeBlock, programNode, inWith));
 
         // reset ASTAllocator
         m_context->astAllocator().reset();

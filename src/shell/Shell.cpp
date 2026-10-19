@@ -1,3 +1,10 @@
+extern "C" { extern thread_local unsigned long GC_or_ro_stats[8]; }
+extern "C" {
+extern thread_local unsigned long GC_numeric_ro_stats[16];
+extern thread_local unsigned long GC_minor_kind_stats[192][8];
+extern thread_local unsigned long GC_minor_phase_ns[8];
+}
+extern "C" { extern thread_local unsigned long GC_manual_kind_stats[8]; }
 /*
  * Copyright (c) 2017-present Samsung Electronics Co., Ltd
  *
@@ -37,6 +44,85 @@
 #endif
 
 #include "api/EscargotPublic.h"
+#include "gc/gc.h"
+extern "C" {
+extern GC_MAY_THREAD_LOCAL GC_word GC_target_table_stats[8];
+extern GC_MAY_THREAD_LOCAL GC_word GC_source_page_stats[20];
+extern GC_MAY_THREAD_LOCAL GC_word GC_minor_grace_stats[12];
+extern GC_MAY_THREAD_LOCAL GC_word GC_target_reuse_stats[16];
+extern GC_MAY_THREAD_LOCAL GC_word GC_sparse_attempts;
+extern GC_MAY_THREAD_LOCAL GC_word GC_sparse_cache_hits;
+extern GC_MAY_THREAD_LOCAL GC_word GC_sparse_captures;
+extern GC_MAY_THREAD_LOCAL GC_word GC_sparse_zero_captures;
+extern GC_MAY_THREAD_LOCAL GC_word GC_sparse_queries;
+extern GC_MAY_THREAD_LOCAL GC_word GC_sparse_hits;
+extern GC_MAY_THREAD_LOCAL GC_word GC_sparse_caps;
+extern GC_MAY_THREAD_LOCAL GC_word GC_sparse_oom;
+extern GC_MAY_THREAD_LOCAL GC_word GC_sparse_layout_fallbacks;
+extern GC_MAY_THREAD_LOCAL GC_word GC_sparse_max_entries;
+extern GC_MAY_THREAD_LOCAL GC_word GC_sparse_mapping_bytes;
+extern GC_MAY_THREAD_LOCAL GC_word GC_sparse_zero_queries;
+extern GC_MAY_THREAD_LOCAL GC_word GC_young_log_events;
+extern GC_MAY_THREAD_LOCAL GC_word GC_young_log_overflows;
+extern GC_MAY_THREAD_LOCAL GC_word GC_young_log_cleared;
+extern GC_MAY_THREAD_LOCAL GC_word GC_young_log_compacted;
+extern GC_MAY_THREAD_LOCAL GC_word GC_young_log_max_entries;
+extern GC_MAY_THREAD_LOCAL GC_word GC_young_log_max_bytes;
+extern GC_MAY_THREAD_LOCAL GC_word GC_young_sweeps;
+extern GC_MAY_THREAD_LOCAL GC_word GC_old_blocks_preserved;
+extern GC_MAY_THREAD_LOCAL GC_word GC_young_mark_attempts;
+extern GC_MAY_THREAD_LOCAL GC_word GC_young_mark_aborts;
+extern GC_MAY_THREAD_LOCAL GC_word GC_young_abort_rescuers;
+extern GC_MAY_THREAD_LOCAL GC_word GC_young_abort_roots;
+extern GC_MAY_THREAD_LOCAL GC_word GC_young_dirty_rejections;
+extern GC_MAY_THREAD_LOCAL GC_word GC_young_retrace_restores;
+extern GC_MAY_THREAD_LOCAL GC_word GC_young_baseline_captures;
+extern GC_MAY_THREAD_LOCAL GC_word GC_young_preflight_rejections;
+extern GC_MAY_THREAD_LOCAL GC_word GC_young_old_source_blocks;
+extern GC_MAY_THREAD_LOCAL GC_word GC_young_old_source_empty;
+extern GC_MAY_THREAD_LOCAL GC_word GC_young_old_source_recoveries;
+extern GC_MAY_THREAD_LOCAL GC_word GC_young_bit_source_blocks;
+extern GC_MAY_THREAD_LOCAL GC_word GC_admission_poor_samples;
+extern GC_MAY_THREAD_LOCAL GC_word GC_admission_closings;
+extern GC_MAY_THREAD_LOCAL GC_word GC_admission_rearms;
+extern GC_MAY_THREAD_LOCAL GC_word GC_admission_suppressed;
+extern GC_MAY_THREAD_LOCAL GC_word GC_admission_closed_fulls;
+extern GC_MAY_THREAD_LOCAL GC_word GC_admission_parks;
+extern GC_MAY_THREAD_LOCAL GC_word GC_admission_restore_fulls;
+extern GC_MAY_THREAD_LOCAL GC_word GC_admission_untracked_fulls;
+extern GC_MAY_THREAD_LOCAL GC_word GC_admission_backoff_max;
+extern GC_MAY_THREAD_LOCAL GC_word GC_admission_backoff_resets;
+extern GC_MAY_THREAD_LOCAL GC_word GC_admission_quiet_hints;
+extern GC_MAY_THREAD_LOCAL GC_word GC_admission_full_rw_epochs;
+extern GC_MAY_THREAD_LOCAL GC_word GC_admission_full_rw_hints;
+extern GC_MAY_THREAD_LOCAL GC_word GC_large_defer_epochs;
+extern GC_MAY_THREAD_LOCAL GC_word GC_large_defer_attempts;
+extern GC_MAY_THREAD_LOCAL GC_word GC_large_defer_success;
+extern GC_MAY_THREAD_LOCAL GC_word GC_large_defer_bytes;
+extern GC_MAY_THREAD_LOCAL GC_word GC_large_defer_limit_hits;
+extern GC_MAY_THREAD_LOCAL GC_word GC_bench_anchor_caps;
+extern GC_MAY_THREAD_LOCAL GC_word GC_bench_anchor_removed;
+extern GC_MAY_THREAD_LOCAL GC_word GC_bench_anchor_max_removed;
+extern GC_MAY_THREAD_LOCAL GC_word GC_bench_anchor_full_updates;
+extern GC_MAY_THREAD_LOCAL int GC_bench_anchor_mode;
+extern GC_MAY_THREAD_LOCAL GC_word GC_large_budget_samples;
+extern GC_MAY_THREAD_LOCAL GC_word GC_large_budget_limited;
+extern GC_MAY_THREAD_LOCAL GC_word GC_large_budget_cap_limited;
+extern GC_MAY_THREAD_LOCAL GC_word GC_large_budget_sum;
+extern GC_MAY_THREAD_LOCAL GC_word GC_large_budget_min;
+extern GC_MAY_THREAD_LOCAL GC_word GC_large_budget_max;
+
+
+extern GC_MAY_THREAD_LOCAL GC_word GC_young_retrace_rejections;
+extern GC_MAY_THREAD_LOCAL GC_word GC_young_retained_bytes;
+extern GC_MAY_THREAD_LOCAL GC_word GC_young_snapshot_bytes;
+extern GC_MAY_THREAD_LOCAL GC_word GC_young_pending_kept;
+extern GC_MAY_THREAD_LOCAL GC_word GC_young_pending_drained;
+
+extern GC_MAY_THREAD_LOCAL GC_word GC_young_live_bytes;
+extern GC_MAY_THREAD_LOCAL GC_word GC_young_live_limit;
+}
+
 
 #if defined(__clang__) || defined(__GNUC__) || defined(_MSC_VER)
 extern "C" {
@@ -1249,6 +1335,7 @@ static void printHelp()
     printf("  --shell                     Force starting the interactive shell\n");
     printf("  --module                    Execute the following script as an ES module\n");
     printf("  --gc-incremental            Enable incremental garbage collection\n");
+    printf("  --gc-generational           Enable stop-the-world generational garbage collection\n");
     printf("  --gc-track-dirty            Track heap writes while using full garbage collection\n");
     printf("  --canblock-is-false         Set the platform canBlock flag to false\n");
     printf("  --filename-as=<name>        Specify the file name of the executed script\n");
@@ -1301,6 +1388,8 @@ static __attribute__((noinline)) int shellMain(int argc, char* argv[], void* tar
             i++;
         } else if (strcmp(argv[i], "--gc-track-dirty") == 0) {
             initializeOption = initializeOption | Globals::InitializeOption::TrackDirtyPages;
+        } else if (strcmp(argv[i], "--gc-generational") == 0) {
+            initializeOption = initializeOption | Globals::InitializeOption::PreferGenerationalGC;
         } else if (strcmp(argv[i], "--gc-incremental") == 0) {
             initializeOption = initializeOption | Globals::InitializeOption::PreferIncrementalGC;
         }
@@ -1308,6 +1397,54 @@ static __attribute__((noinline)) int shellMain(int argc, char* argv[], void* tar
 
     ShellPlatform* platform = new ShellPlatform();
     Globals::initialize(platform, initializeOption);
+    // Both callbacks have been installed by ThreadLocal::initialize.
+    static GC_start_callback_proc savedFullStart = GC_get_start_callback();
+    static GC_on_collection_event_proc savedEvent = GC_get_on_collection_event();
+    static unsigned long full = 0, minor = 0;
+    static unsigned long epochMinors = 0, multiMinorEpochs = 0, maxEpochMinors = 0;
+    static bool activeFull = false;
+    static std::chrono::steady_clock::time_point markStart, reclaimStart;
+    static double markMs[2] = {}, reclaimMs[2] = {};
+    static double abandonedMarkMs = 0;
+    static const bool traceCycles = getenv("ESCARGOT_GC_CYCLE_TRACE") != nullptr;
+    static size_t allocatedAtMark = 0;
+    GC_set_start_callback([] {
+        activeFull = true;
+        savedFullStart();
+    });
+    GC_set_on_collection_event([](GC_EventType event) {
+        const auto now = std::chrono::steady_clock::now();
+        if (event == GC_EVENT_MARK_START) { markStart = now; allocatedAtMark = GC_get_bytes_since_gc(); }
+        if (traceCycles && (event == GC_EVENT_MARK_END || event == GC_EVENT_MARK_ABANDON)) {
+            fprintf(stderr, "GC_CYCLE_MARK {\"full\":%d,\"abandoned\":%d,\"allocated\":%zu,\"new_live_estimate\":%lu,\"limit\":%lu,\"ms\":%.3f}\n", activeFull, event == GC_EVENT_MARK_ABANDON, allocatedAtMark, (unsigned long)GC_young_live_bytes, (unsigned long)GC_young_live_limit, std::chrono::duration<double, std::milli>(now - markStart).count());
+        }
+        if (event == GC_EVENT_MARK_ABANDON)
+            abandonedMarkMs += std::chrono::duration<double, std::milli>(now - markStart).count();
+        if (event == GC_EVENT_MARK_END)
+            markMs[activeFull] += std::chrono::duration<double, std::milli>(now - markStart).count();
+        if (event == GC_EVENT_RECLAIM_START) reclaimStart = now;
+        if (event == GC_EVENT_RECLAIM_END) {
+            if (traceCycles) {
+                GC_prof_stats_s stats;
+#if defined(GC_THREADS)
+                GC_get_prof_stats_unsafe(&stats, sizeof(stats));
+#else
+                GC_get_prof_stats(&stats, sizeof(stats));
+#endif
+                fprintf(stderr, "GC_CYCLE_RECLAIM {\"full\":%d,\"immediate_reclaimed_bytes\":%ld,\"heap\":%zu,\"free\":%zu,\"ms\":%.3f}\n", activeFull, (long)stats.bytes_reclaimed_since_gc, GC_get_heap_size(), GC_get_free_bytes(), std::chrono::duration<double, std::milli>(now - reclaimStart).count());
+            }
+            reclaimMs[activeFull] += std::chrono::duration<double, std::milli>(now - reclaimStart).count();
+            if (activeFull) {
+                if (epochMinors >= 2) multiMinorEpochs++;
+                if (epochMinors > maxEpochMinors) maxEpochMinors = epochMinors;
+                epochMinors = 0;
+                full++;
+            } else { minor++; epochMinors++; }
+            activeFull = false;
+        }
+        savedEvent(event);
+    });
+
 
     if (Memory::stackBottom() != targetStackBottom) {
         fprintf(stderr, "Failed to set GC stack bottom\n");
@@ -1335,6 +1472,9 @@ static __attribute__((noinline)) int shellMain(int argc, char* argv[], void* tar
     for (int i = 1; i < argc; i++) {
         if (strlen(argv[i]) >= 2 && argv[i][0] == '-') { // parse command line option
             if (argv[i][1] == '-') { // `--option` case
+                if (strcmp(argv[i], "--gc-generational") == 0) {
+                    continue;
+                }
                 if (strcmp(argv[i], "--gc-track-dirty") == 0) {
                     continue;
                 }
@@ -1493,6 +1633,60 @@ static __attribute__((noinline)) int shellMain(int argc, char* argv[], void* tar
     context.release();
     instance.release();
 
+    fprintf(stderr,"OR_RO_AUDIT [");
+    for (int i=0;i<8;++i) fprintf(stderr,"%s%lu",i?",":"",GC_or_ro_stats[i]);
+    fprintf(stderr,"]\n");
+    fprintf(stderr,"NUMERIC_RO_AUDIT [");
+    for (int i=0;i<16;++i) fprintf(stderr,"%s%lu",i?",":"",GC_numeric_ro_stats[i]);
+    fprintf(stderr,"]\nMINOR_PHASE_NS [");
+    for (int i=0;i<8;++i) fprintf(stderr,"%s%lu",i?",":"",GC_minor_phase_ns[i]);
+    fprintf(stderr,"]\n");
+    for (int k=0;k<192;++k) {
+        if (!GC_minor_kind_stats[k][0]) continue;
+        fprintf(stderr,"MINOR_KIND_AUDIT [%d",k);
+        for (int i=0;i<8;++i) fprintf(stderr,",%lu",GC_minor_kind_stats[k][i]);
+        fprintf(stderr,"]\n");
+    }
+    fprintf(stderr, "TARGET_REUSE_AUDIT [");
+    for (unsigned i = 0; i < 16; ++i)
+        fprintf(stderr, "%s%lu", i ? "," : "", (unsigned long)GC_target_reuse_stats[i]);
+    fprintf(stderr, "]\n");
+    fprintf(stderr, "MANUAL_KIND_AUDIT [");
+    for (unsigned i = 0; i < 8; ++i)
+        fprintf(stderr, "%s%lu", i ? "," : "", GC_manual_kind_stats[i]);
+    fprintf(stderr, "]\n");
+    fprintf(stderr, "MINOR_GRACE_AUDIT [");
+    for (unsigned i = 0; i < 12; ++i)
+        fprintf(stderr, "%s%lu", i ? "," : "", (unsigned long)GC_minor_grace_stats[i]);
+    fprintf(stderr, "]\n");
+    fprintf(stderr, "SOURCE_PAGE_AUDIT [");
+    for (unsigned i = 0; i < 20; ++i)
+        fprintf(stderr, "%s%lu", i ? "," : "", (unsigned long)GC_source_page_stats[i]);
+    fprintf(stderr, "]\n");
+    fprintf(stderr, "TARGET_TABLE_AUDIT {\"epochs\":%lu,\"registrations\":%lu,\"invalidations\":%lu,\"capped_blocks\":%lu,\"oom\":%lu,\"max_table_bytes\":%lu,\"virtual_bytes\":%lu,\"advice_failures\":%lu}\n",
+      (unsigned long)GC_target_table_stats[0],(unsigned long)GC_target_table_stats[1],(unsigned long)GC_target_table_stats[2],(unsigned long)GC_target_table_stats[3],(unsigned long)GC_target_table_stats[4],(unsigned long)GC_target_table_stats[5],(unsigned long)GC_target_table_stats[6],(unsigned long)GC_target_table_stats[7]);
+    fprintf(stderr, "ANCHOR_BUDGET_AUDIT {\"mode\":%d,\"caps\":%lu,\"removed_sum\":%lu,\"max_removed\":%lu,\"full_updates\":%lu}\n", GC_bench_anchor_mode, (unsigned long)GC_bench_anchor_caps, (unsigned long)GC_bench_anchor_removed, (unsigned long)GC_bench_anchor_max_removed, (unsigned long)GC_bench_anchor_full_updates);
+    fprintf(stderr, R"json(GC_POLICY_AUDIT {"free_space_divisor":%lu})json" "\n", (unsigned long)GC_get_free_space_divisor());
+    fprintf(stderr, R"json(SPARSE_SOURCE_AUDIT {"attempts":%lu,"cache_hits":%lu,"captures":%lu,"zero_captures":%lu,"queries":%lu,"hits":%lu,"caps":%lu,"oom":%lu,"layout_fallbacks":%lu,"max_entries":%lu,"mapping_bytes":%lu,"zero_queries":%lu})json" "\n", (unsigned long)GC_sparse_attempts, (unsigned long)GC_sparse_cache_hits, (unsigned long)GC_sparse_captures, (unsigned long)GC_sparse_zero_captures, (unsigned long)GC_sparse_queries, (unsigned long)GC_sparse_hits, (unsigned long)GC_sparse_caps, (unsigned long)GC_sparse_oom, (unsigned long)GC_sparse_layout_fallbacks, (unsigned long)GC_sparse_max_entries, (unsigned long)GC_sparse_mapping_bytes, (unsigned long)GC_sparse_zero_queries);
+    fprintf(stderr, R"json(YOUNG_LOG_AUDIT {"events":%lu,"overflows":%lu,"cleared":%lu,"compacted":%lu,"max_entries":%lu,"max_bytes":%lu})json" "\n", (unsigned long)GC_young_log_events, (unsigned long)GC_young_log_overflows, (unsigned long)GC_young_log_cleared, (unsigned long)GC_young_log_compacted, (unsigned long)GC_young_log_max_entries, (unsigned long)GC_young_log_max_bytes);
+    fprintf(stderr, "LARGE_BUDGET_AUDIT {\"samples\":%lu,\"budget_limited\":%lu,\"cap_limited\":%lu,\"sum\":%lu,\"min\":%lu,\"max\":%lu}\n", (unsigned long)GC_large_budget_samples, (unsigned long)GC_large_budget_limited, (unsigned long)GC_large_budget_cap_limited, (unsigned long)GC_large_budget_sum, (unsigned long)GC_large_budget_min, (unsigned long)GC_large_budget_max);
+    fprintf(stderr, "GENERATIONAL_EPOCH_AUDIT {\"multi_minor_epochs\":%lu,\"max_epoch_minors\":%lu,\"current_epoch_minors\":%lu}\n", multiMinorEpochs, maxEpochMinors > epochMinors ? maxEpochMinors : epochMinors, epochMinors);
+    fprintf(stderr, "YOUNG_SOURCE_AUDIT {\"old_source_blocks\":%lu,\"empty_source_blocks\":%lu,\"manual_mark_recoveries\":%lu,\"current_bit_blocks\":%lu}\n", (unsigned long)GC_young_old_source_blocks, (unsigned long)GC_young_old_source_empty, (unsigned long)GC_young_old_source_recoveries, (unsigned long)GC_young_bit_source_blocks);
+    fprintf(stderr, "ADMISSION_AUDIT {\"poor_samples\":%lu,\"closings\":%lu,\"rearms\":%lu,\"suppressed\":%lu,\"closed_fulls\":%lu,\"parks\":%lu,\"restore_fulls\":%lu,\"untracked_fulls\":%lu,\"backoff_max\":%lu,\"backoff_resets\":%lu,\"quiet_hints\":%lu,\"full_rw_epochs\":%lu,\"full_rw_hints\":%lu}\n", (unsigned long)GC_admission_poor_samples, (unsigned long)GC_admission_closings, (unsigned long)GC_admission_rearms, (unsigned long)GC_admission_suppressed, (unsigned long)GC_admission_closed_fulls, (unsigned long)GC_admission_parks, (unsigned long)GC_admission_restore_fulls, (unsigned long)GC_admission_untracked_fulls, (unsigned long)GC_admission_backoff_max, (unsigned long)GC_admission_backoff_resets, (unsigned long)GC_admission_quiet_hints, (unsigned long)GC_admission_full_rw_epochs, (unsigned long)GC_admission_full_rw_hints);
+    fprintf(stderr, "LARGE_DEFER_AUDIT {\"epochs\":%lu,\"attempts\":%lu,\"success\":%lu,\"bytes\":%lu,\"limit_hits\":%lu}\n", (unsigned long)GC_large_defer_epochs, (unsigned long)GC_large_defer_attempts, (unsigned long)GC_large_defer_success, (unsigned long)GC_large_defer_bytes, (unsigned long)GC_large_defer_limit_hits);
+    fprintf(stderr, "YOUNG_MARK_AUDIT {\"attempts\":%lu,\"aborts\":%lu,\"abort_rescuers\":%lu,\"abort_roots\":%lu,\"gate_rejections\":%lu,\"abandoned_mark_ms\":%.3f}\n",
+        (unsigned long)GC_young_mark_attempts, (unsigned long)GC_young_mark_aborts,
+        (unsigned long)GC_young_abort_rescuers, (unsigned long)GC_young_abort_roots,
+        (unsigned long)GC_young_dirty_rejections, abandonedMarkMs);
+    fprintf(stderr, "YOUNG_RETRACE_AUDIT {\"restores\":%lu,\"rejections\":%lu,\"retained_bytes\":%lu,\"metadata_bytes\":%lu,\"pending_kept\":%lu,\"pending_drained\":%lu,\"baseline_captures\":%lu,\"preflight_rejections\":%lu}\n", (unsigned long)GC_young_retrace_restores, (unsigned long)GC_young_retrace_rejections, (unsigned long)GC_young_retained_bytes, (unsigned long)GC_young_snapshot_bytes, (unsigned long)GC_young_pending_kept, (unsigned long)GC_young_pending_drained, (unsigned long)GC_young_baseline_captures, (unsigned long)GC_young_preflight_rejections);
+    fprintf(stderr, "YOUNG_RECLAIM_AUDIT {\"sweeps\":%lu,\"old_blocks_preserved\":%lu}\n", (unsigned long)GC_young_sweeps, (unsigned long)GC_old_blocks_preserved);
+    fprintf(stderr, "GENERATIONAL_AUDIT {\"full\":%lu,\"minor\":%lu,\"incremental\":%d,\"vdb\":%u,\"full_frequency\":%d,\"time_limit\":%lu,\"full_mark_ms\":%.3f,\"minor_mark_ms\":%.3f,\"full_reclaim_ms\":%.3f,\"minor_reclaim_ms\":%.3f,\"heap_bytes\":%zu,\"free_bytes\":%zu}\n",
+        full, minor, GC_is_incremental_mode(), GC_get_actual_vdb(), GC_get_full_freq(),
+        GC_get_time_limit(), markMs[1], markMs[0], reclaimMs[1], reclaimMs[0],
+        GC_get_heap_size(), GC_get_free_bytes());
+    fprintf(stderr, "PHONE_MODE_AUDIT {\"gc_no\":%lu,\"incremental\":%d,\"free_space_divisor\":%lu,\"heap_bytes\":%zu,\"free_bytes\":%zu}\n",
+        (unsigned long)GC_get_gc_no(), GC_is_incremental_mode(),
+        (unsigned long)GC_get_free_space_divisor(), GC_get_heap_size(), GC_get_free_bytes());
     Globals::finalize();
 
 #if defined(ESCARGOT_GOOGLE_PERF)

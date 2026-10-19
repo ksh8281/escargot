@@ -146,6 +146,8 @@ public:
         PreferIncrementalGC = 1 << 0,
         // Track heap writes while retaining synchronous full garbage collection.
         TrackDirtyPages = 1 << 1,
+        // Collect young allocations without splitting marking across mutator work.
+        PreferGenerationalGC = 1 << 2,
     };
 
     friend inline InitializeOption operator|(InitializeOption a, InitializeOption b)
