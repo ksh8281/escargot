@@ -234,7 +234,7 @@ struct JSONKey {
         return has8BitContent ? static_cast<const LChar*>(characters)[index] : static_cast<const char16_t*>(characters)[index];
     }
 
-    AtomicString intern(ExecutionState& state, std::basic_string<LChar>& latin1Key) const
+    AtomicString intern(ExecutionState& state, std::string& latin1Key) const
     {
         if (has8BitContent) {
             const auto* chars = static_cast<const LChar*>(characters);
@@ -248,9 +248,9 @@ struct JSONKey {
         if (!isAllASCII(chars, length) && isAllLatin1(chars, length)) {
             latin1Key.resize(length);
             for (size_t i = 0; i < length; ++i) {
-                latin1Key[i] = static_cast<LChar>(chars[i]);
+                latin1Key[i] = static_cast<char>(chars[i]);
             }
-            return AtomicString(state.context(), latin1Key.data(), length);
+            return AtomicString(state.context(), reinterpret_cast<const LChar*>(latin1Key.data()), length);
         }
         return AtomicString(state, chars, length);
     }
@@ -315,7 +315,7 @@ static Object* createJSONObject(ExecutionState& state, size_t memberCount, KeyAt
     keys.reserve(memberCount);
     valueIndexes.resize(memberCount);
     std::unordered_map<String*, size_t> uniqueKeys;
-    std::basic_string<LChar> latin1Key;
+    std::string latin1Key;
     size_t keyOrdinal = 0;
     size_t uniqueKeyCount = 0;
     for (size_t ordinal = 0; ordinal < memberCount; ++ordinal) {

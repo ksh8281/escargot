@@ -712,7 +712,12 @@ void ThreadLocal::initialize(uint32_t optionFromGlobal)
 #endif
 
     // g_randEngine
-    g_randEngine = new std::mt19937(static_cast<unsigned int>(time(NULL)));
+    unsigned int randomSeed = static_cast<unsigned int>(time(NULL));
+    Optional<const char*> seedSetting(getenv("ESCARGOT_BENCH_SEED"));
+    if (seedSetting) {
+        randomSeed = static_cast<unsigned int>(strtoul(seedSetting.value(), nullptr, 10));
+    }
+    g_randEngine = new std::mt19937(randomSeed);
 
     // g_bfContext
     bf_context_init(&g_bfContext, [](void* opaque, void* ptr, size_t size) -> void* { return realloc(ptr, size); }, nullptr);
