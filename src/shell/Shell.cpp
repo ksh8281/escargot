@@ -45,6 +45,7 @@ extern "C" { extern thread_local unsigned long GC_manual_kind_stats[8]; }
 
 #include "api/EscargotPublic.h"
 #include "gc/gc.h"
+#include "gc/gc_mark.h"
 extern "C" {
 extern GC_MAY_THREAD_LOCAL GC_word GC_target_table_stats[8];
 extern GC_MAY_THREAD_LOCAL GC_word GC_source_page_stats[20];
