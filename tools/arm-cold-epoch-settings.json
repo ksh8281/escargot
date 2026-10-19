@@ -1,0 +1,47 @@
+{
+  "baseline_repository": "ksh8281/escargot",
+  "baseline_revision": "eba2d98d87068759220b00b72e37341f095a8226",
+  "gc_revision": "315c45db3bd22c7a09a465adcd6b55716c8b6bbb",
+  "settings": {
+    "flags": [
+      "--gc-generational"
+    ],
+    "env": {
+      "GC_USE_GETWRITEWATCH": "0",
+      "GC_FULL_FREQUENCY": "2",
+      "GC_GENERATIONAL_ROOTS_FIRST": "0",
+      "GC_GENERATIONAL_DIRTY_PERCENT": "0",
+      "GC_GENERATIONAL_SURVIVAL_PERCENT": "0",
+      "GC_GENERATIONAL_MARKED_BITS": "1",
+      "GC_GENERATIONAL_LARGE_DEFER": "1",
+      "GC_GENERATIONAL_ADMISSION": "1",
+      "GC_GENERATIONAL_PARK_VDB": "1",
+      "GC_GENERATIONAL_ADMISSION_BACKOFF": "1",
+      "GC_GENERATIONAL_QUIET_VDB_HINTS": "1",
+      "GC_GENERATIONAL_FULL_RW_PARK": "1",
+      "GC_GENERATIONAL_LARGE_DEFER_DIVISOR": "4",
+      "GC_GENERATIONAL_LARGE_DEFER_CAP_KIB": "1024",
+      "GC_BENCH_FULL_LIVE_ANCHOR": "0",
+      "GC_GENERATIONAL_RETRACE_LOG": "0",
+      "GC_GENERATIONAL_SPARSE_SOURCES": "1",
+      "GC_BENCH_TARGET_MARK_TABLE": "3",
+      "GC_BENCH_SOURCE_PAGE_SLICE": "1",
+      "GC_BENCH_MINOR_GRACE_CYCLES": "4",
+      "GC_BENCH_FAULT_BATCH_PAGES": "1",
+      "ESCARGOT_BENCH_SEED": "1",
+      "GC_BENCH_MANUAL_CODEBLOCK": "1",
+      "GC_BENCH_NUMERIC_RO": "3",
+      "GC_BENCH_NUMERIC_RO_CAP": "64",
+      "GC_BENCH_NUMERIC_RO_OR": "1",
+      "GC_BENCH_SOURCE_BATCH": "7"
+    }
+  },
+  "expected_source_files_sha256": {
+    "third_party/GCutil/alloc.c": "adb727feaf036b3ca7daa9b01fff57571b1e3f024cef239683e58b82617f33bd",
+    "third_party/GCutil/malloc.c": "3b21cd3f7cf578ad3f040a470283ab45fb69ae2da613dea6ef3c8687c82bd0ed",
+    "third_party/GCutil/mark.c": "f28057b38dd3f043fec58099a9063b1b03fe4f3018ac22eb2f89ccd1ff31eaa7",
+    "src/runtime/ThreadLocal.cpp": "d53dbe35c9eb450930c260d6cc40a481cb7610185994aec0d175a8431d2b0803",
+    "src/runtime/VMInstance.cpp": "91461d01a20fe703027860c77a7a919e9d04092824deefb46865178dc5b56f35"
+  },
+  "scope": "Native Linux GCC CI, not NDK phone; frozen cold-epoch source and common baseline seed/byte-string/mode-report shims. Baseline default full, candidate --gc-generational. Score/pure work no RSS sampler; separate fixed-work memory. Each score and pure-work mode3 alternating order; memory each1 per ABI."
+}
