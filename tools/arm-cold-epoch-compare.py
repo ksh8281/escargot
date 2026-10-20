@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Native ARM source-budget policy and current-full diagnostic."""
+"""Native ARM comparison of original, 10 MiB, and 4 MiB activation."""
 
 import datetime
 import errno
@@ -42,30 +42,42 @@ def write_json(path, value):
     path.write_text(json.dumps(value, indent=2) + '\n')
 
 
-def baseline_build(source, architecture, root_report):
+def control_build(source, architecture, root_report, mode):
+    assert mode in ['original', 'previous']
     work = source.parent
-    control = work / 'cold-epoch-original'
+    control = work / ('cold-epoch-' + mode)
+    repository = CONFIG['baseline_repository']
+    revision = CONFIG['baseline_revision' if mode == 'original' else 'previous_revision']
     if not control.exists():
         run(['git', 'init', '-q', str(control)])
         run(['git', 'remote', 'add', 'origin',
-             'https://github.com/' + CONFIG['baseline_repository'] + '.git'], control)
-        run(['git', 'fetch', '--depth', '1', 'origin', CONFIG['baseline_revision']], control)
+             'https://github.com/' + repository + '.git'], control)
+        run(['git', 'fetch', '--depth', '1', 'origin', revision], control)
         run(['git', 'checkout', '--detach', '-q', 'FETCH_HEAD'], control)
         run(['git', 'submodule', 'update', '--init', '--jobs', '8',
              'third_party/GCutil', 'third_party/walrus'], control)
-    assert output(['git', 'rev-parse', 'HEAD'], control) == CONFIG['baseline_revision']
+    assert output(['git', 'rev-parse', 'HEAD'], control) == revision
+    if mode == 'previous':
+        assert output(['git', 'rev-parse', 'HEAD'], control / 'third_party/GCutil') == CONFIG['gc_revision']
+        for name, expected in CONFIG['expected_source_files_sha256'].items():
+            if name != 'src/heap/Heap.cpp':
+                assert sha256(control / name) == expected, name
+        old_heap = (control / 'src/heap/Heap.cpp').read_text()
+        old_call = 'GC_enable_generational(10 * 1024 * 1024);'
+        assert old_heap.count(old_call) == 1
+        assert old_heap.replace(old_call, 'GC_enable_generational(4 * 1024 * 1024);') == (source / 'src/heap/Heap.cpp').read_text()
     options = json.loads((root_report / ('build-' + architecture + '.json')).read_text())['cmake_options']
-    build = work / ('build-original-' + architecture)
+    build = work / ('build-' + mode + '-' + architecture)
     if architecture == 'arm32':
         image = (root_report / 'arm32-image.txt').read_text().strip()
-        script = root_report / 'build-original-arm32.py'
+        script = root_report / ('build-' + mode + '-arm32.py')
         script.write_text(
             'import subprocess\n'
             'commands = ' + repr([
                 ['gcc', '--version'],
-                ['cmake', '-S', '/work/cold-epoch-original', '-B', '/work/build-original-arm32',
+                ['cmake', '-S', '/work/' + control.name, '-B', '/work/' + build.name,
                  '-GNinja', *options],
-                ['cmake', '--build', '/work/build-original-arm32', '--target', 'escargot', '--parallel', '8'],
+                ['cmake', '--build', '/work/' + build.name, '--target', 'escargot', '--parallel', '8'],
             ]) + '\n'
             'for command in commands:\n'
             ' print("+", command, flush=True)\n'
@@ -75,7 +87,7 @@ def baseline_build(source, architecture, root_report):
                    'apt-get install -y --no-install-recommends ca-certificates cmake ninja-build '
                    'pkg-config libicu-dev gcc g++ make python3 file binutils util-linux\n'
                    'exec setpriv --reuid="$BENCHMARK_UID" --regid="$BENCHMARK_GID" '
-                   '--clear-groups python3 -u /report/build-original-arm32.py\n')
+                   '--clear-groups python3 -u /report/' + script.name + '\n')
         run(['docker', 'run', '--rm', '--platform', 'linux/arm/v7',
              '-v', str(work) + ':/work', '-v', str(root_report) + ':/report',
              '-w', '/work', '-e', 'BENCHMARK_UID=' + str(os.getuid()),
@@ -94,7 +106,7 @@ def parse_audit(contents, mode, require_active=True):
     assert len(common) == 1, ('Missing mode report', mode)
     result = {'common': json.loads(common[0])}
     expected_divisor = (int(CONFIG['settings']['env']['GC_FREE_SPACE_DIVISOR'])
-                        if mode == 'candidate' else 12)
+                        if mode in ['candidate', 'previous'] else 12)
     assert result['common']['free_space_divisor'] == expected_divisor, result
     if mode == 'original':
         assert result['common']['incremental'] == 0, result
@@ -269,9 +281,11 @@ def main():
         assert data['candidate_gc_revision'] == CONFIG['gc_revision']
         for name, expected in CONFIG['expected_source_files_sha256'].items():
             assert sha256(source / name) == expected, name
-        baseline, options = baseline_build(source, architecture, root_report)
+        baseline, options = control_build(source, architecture, root_report, 'original')
+        previous, previous_options = control_build(source, architecture, root_report, 'previous')
+        assert previous_options == options
         candidate = source.parent / ('build-' + architecture) / 'escargot'
-        for name, binary in [('original', baseline), ('candidate', candidate)]:
+        for name, binary in [('original', baseline), ('previous', previous), ('candidate', candidate)]:
             header = binary.read_bytes()[:20]
             expected_class, expected_machine = (1, 40) if architecture == 'arm32' else (2, 183)
             assert header[:4] == b'\x7fELF' and header[4] == expected_class
@@ -282,8 +296,7 @@ def main():
         common_env.update(ESCARGOT_BENCH_SEED='1', LD_PRELOAD='')
         envs = {'original': common_env,
                 'candidate': {**common_env, **CONFIG['settings']['env']},
-                'current_full': {**common_env, **CONFIG['settings']['env'],
-                                 'GC_FREE_SPACE_DIVISOR': '12'}}
+                'previous': {**common_env, **CONFIG['settings']['env']}}
         if architecture == 'arm32':
             runtime = os.environ['BENCHMARK_RUNTIME_DIRECTORY']
             loader = os.environ['BENCHMARK_RUNTIME_LOADER']
@@ -300,7 +313,7 @@ def main():
                                'loader_sha256': sha256('/lib/ld-linux-aarch64.so.1')}
         commands = {'original': [*prefix, str(baseline)],
                     'candidate': [*prefix, str(candidate), *CONFIG['settings']['flags']],
-                    'current_full': [*prefix, str(candidate)]}
+                    'previous': [*prefix, str(previous), *CONFIG['settings']['flags']]}
         wtb = harness / 'test/web-tooling-benchmark'
         cli = (wtb / 'dist/cli.js').read_text()
         needle = '  console.log(`Geometric mean: ${align(hz.toFixed(2), 5, "right")} runs/s`);'
@@ -310,9 +323,7 @@ def main():
         score_driver.write_text(cli)
         fixed_driver = report / 'wtb-work.js'
         fixed_driver.write_text("var benchmarkCheckpoint=function(){};\nvar workStart=Date.now();\nload('dist/memory.js');\nprint('WTB_FIXED_WORK_MS '+(Date.now()-workStart));\n")
-        sunspider = monthly.build_sunspider()
-        suites = [('sunspider', harness, sunspider),
-                  ('octane', harness / 'test/octane', 'run.js'),
+        suites = [('octane', harness / 'test/octane', 'run.js'),
                   ('fixed_work', wtb, fixed_driver)]
         drivers = monthly.build_memory_drivers(wtb)
         data['input_sha256'] = {'wtb_original_cli': sha256(wtb / 'dist/cli.js'),
@@ -320,7 +331,7 @@ def main():
                                 'wtb_memory_bundle': sha256(wtb / 'dist/memory.js'),
                                 'wtb_work_driver': sha256(fixed_driver),
                                 'octane_run': sha256(harness / 'test/octane/run.js')}
-        data['score_protocol'] = 'Three alternating original/candidate pairs of stock Octane and fixed WTB. Current-code full FSD12 once per suite during repetition2 as a diagnostic. No RSS sampler in timing. WTB score loops omitted; fixed work loads memory.js and invokes18 fn3 times including loading, without checkpoint waits or explicit GC.'
+        data['score_protocol'] = 'Stock Octane: three runs each of original, previous10MiB, candidate4MiB in a three-position Latin-square order. Fixed WTB: three alternating original/candidate pairs. No RSS sampler in timing. WTB score loops omitted; fixed work loads memory.js and invokes18 fn3 times including loading, without checkpoint waits or explicit GC.'
         data['memory_protocol'] = 'Separate fixed-work-smaps-rollup-v2, 10ms sampling on monitor CPU; active-window averages exclude checkpoint waits; peak is whole-process ru_maxrss; two explicit fulls only after workload_end.'
         for path in (harness / 'test/octane').glob('*.js'):
             path.read_bytes()
@@ -328,12 +339,16 @@ def main():
         data['status'] = 'scores'
         write_json(report / 'measurements.json', data)
         for repeat in range(repetitions):
-            order = ['original', 'candidate'] if repeat % 2 == 0 else ['candidate', 'original']
             for suite, directory, script in suites:
-                for mode in order + (['current_full'] if repeat == 1 else []):
+                if suite == 'octane':
+                    modes = ['original', 'previous', 'candidate']
+                    order = modes[repeat:] + modes[:repeat]
+                else:
+                    order = ['original', 'candidate'] if repeat % 2 == 0 else ['candidate', 'original']
+                for mode in order:
                     label = f'{architecture}-{suite}-{repeat + 1}-{mode}'
                     result, contents = process_measure(label, mode, commands[mode], directory, script,
-                                                       envs[mode], report, cpu, monitor_cpu, suite != 'sunspider')
+                                                       envs[mode], report, cpu, monitor_cpu, True)
                     write_json(report / (label + '.json'), result)
                     score_result(suite, result, contents)
                     result.update(suite=suite, repetition=repeat + 1)
@@ -346,7 +361,7 @@ def main():
         for suite in ['octane', 'web_tooling']:
             directory, script, count, iterations = drivers[suite]
             for memory_repeat, mode in enumerate(
-                    ['original', 'candidate', 'candidate', 'original']):
+                    ['original', 'previous', 'candidate', 'candidate', 'previous', 'original']):
                 label = f'{architecture}-{suite}-memory-{memory_repeat + 1}-{mode}'
                 sample = measure_memory(label, 'escargot', commands[mode], directory, envs[mode],
                                         script, report, cpu, monitor_cpu)
@@ -370,7 +385,7 @@ def main():
                         for group in data['memory'][suite].values()
                         for sample in group['samples']}) == 1
         data['status'] = 'complete'
-        print('SOURCE BUDGET COMPLETE', architecture, flush=True)
+        print('EARLY TRACKING COMPLETE', architecture, flush=True)
     except BaseException as error:
         data.update(status='failed', error=type(error).__name__ + ': ' + str(error))
         raise
