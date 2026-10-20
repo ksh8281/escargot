@@ -152,7 +152,7 @@ void Heap::initialize(bool preferIncremental, bool trackDirtyPages, bool preferG
         // Start with ordinary full collections while the heap is small. Once
         // tracking activates after a full mark, reuse BDWGC's sticky marks and
         // dirty-page rescue, completing each collection with the world stopped.
-        GC_enable_generational(10 * 1024 * 1024);
+        GC_enable_generational(4 * 1024 * 1024);
     } else if (preferIncremental) {
         GC_enable_incremental();
     }
