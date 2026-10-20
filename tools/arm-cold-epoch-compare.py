@@ -93,6 +93,7 @@ def parse_audit(contents, mode, require_active=True):
     common = re.findall(r'^PHONE_MODE_AUDIT (.*)$', contents, re.M)
     assert len(common) == 1, ('Missing mode report', mode)
     result = {'common': json.loads(common[0])}
+    assert result['common']['free_space_divisor'] == (12 if mode == 'original' else 14), result
     if mode == 'original':
         assert result['common']['incremental'] == 0, result
     else:
