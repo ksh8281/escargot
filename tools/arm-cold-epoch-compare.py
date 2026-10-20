@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Paired native ARM CI comparison of the frozen cold-epoch collector."""
+"""Native ARM source-budget policy and current-full diagnostic."""
 
 import datetime
 import errno
@@ -93,18 +93,29 @@ def parse_audit(contents, mode, require_active=True):
     common = re.findall(r'^PHONE_MODE_AUDIT (.*)$', contents, re.M)
     assert len(common) == 1, ('Missing mode report', mode)
     result = {'common': json.loads(common[0])}
-    assert result['common']['free_space_divisor'] == (12 if mode == 'original' else 14), result
+    expected_divisor = (int(CONFIG['settings']['env']['GC_FREE_SPACE_DIVISOR'])
+                        if mode == 'candidate' else 12)
+    assert result['common']['free_space_divisor'] == expected_divisor, result
     if mode == 'original':
         assert result['common']['incremental'] == 0, result
-    else:
-        rows = re.findall(r'^GENERATIONAL_AUDIT (.*)$', contents, re.M)
-        assert len(rows) == 1, ('Missing generational report', mode)
-        result['generational'] = json.loads(rows[0])
-        gc = result['generational']
-        if require_active:
-            assert gc['incremental'] == 1 and gc['vdb'] == 1, gc
-            assert gc['full_frequency'] == 2, gc
-        result['admission'] = [json.loads(x) for x in re.findall(r'^ADMISSION_AUDIT (.*)$', contents, re.M)]
+        return result
+    rows = re.findall(r'^GENERATIONAL_AUDIT (.*)$', contents, re.M)
+    assert len(rows) == 1, ('Missing collector report', mode)
+    result['generational'] = gc = json.loads(rows[0])
+    result['admission'] = [json.loads(x) for x in re.findall(
+        r'^ADMISSION_AUDIT (.*)$', contents, re.M)]
+    assert len(result['admission']) == 1, result
+    if mode == 'current_full':
+        assert gc['minor'] == 0 and gc['incremental'] == 0 and gc['vdb'] == 0, gc
+    elif require_active:
+        assert gc['minor'] > 0 and gc['full_frequency'] == 2, gc
+        assert gc['time_limit'] == 999999, gc
+        if gc['incremental'] != 1 or gc['vdb'] != 1:
+            # Admission can legitimately finish an untracked parked epoch.
+            admission = result['admission'][0]
+            assert admission['parks'] > 0, result
+            assert (admission['untracked_fulls'] > 0
+                    or admission['full_rw_epochs'] > 0), result
     return result
 
 
@@ -249,7 +260,7 @@ def main():
     data = {'status': 'preparing', 'architecture': architecture, 'host': platform.node(),
             'platform': platform.platform(), 'native': True, 'cpu': cpu, 'monitor_cpu': monitor_cpu,
             'measured_at': datetime.datetime.now(datetime.timezone.utc).isoformat(),
-            'configuration': CONFIG, 'repetitions': repetitions, 'memory_repetitions': 1,
+            'configuration': CONFIG, 'repetitions': repetitions, 'memory_repetitions': 2,
             'rows': [], 'memory': {}, 'pointer_bits': 32 if architecture == 'arm32' else 64,
             'candidate_revision': output(['git', 'rev-parse', 'HEAD'], source),
             'candidate_gc_revision': output(['git', 'rev-parse', 'HEAD'], source / 'third_party/GCutil')}
@@ -269,7 +280,10 @@ def main():
         data['cmake_options'] = options
         common_env = {k: v for k, v in os.environ.items() if not k.startswith(('GC_', 'ESCARGOT_'))}
         common_env.update(ESCARGOT_BENCH_SEED='1', LD_PRELOAD='')
-        envs = {'original': common_env, 'candidate': {**common_env, **CONFIG['settings']['env']}}
+        envs = {'original': common_env,
+                'candidate': {**common_env, **CONFIG['settings']['env']},
+                'current_full': {**common_env, **CONFIG['settings']['env'],
+                                 'GC_FREE_SPACE_DIVISOR': '12'}}
         if architecture == 'arm32':
             runtime = os.environ['BENCHMARK_RUNTIME_DIRECTORY']
             loader = os.environ['BENCHMARK_RUNTIME_LOADER']
@@ -285,7 +299,8 @@ def main():
                                'libc_sha256': sha256('/lib/aarch64-linux-gnu/libc.so.6'),
                                'loader_sha256': sha256('/lib/ld-linux-aarch64.so.1')}
         commands = {'original': [*prefix, str(baseline)],
-                    'candidate': [*prefix, str(candidate), *CONFIG['settings']['flags']]}
+                    'candidate': [*prefix, str(candidate), *CONFIG['settings']['flags']],
+                    'current_full': [*prefix, str(candidate)]}
         wtb = harness / 'test/web-tooling-benchmark'
         cli = (wtb / 'dist/cli.js').read_text()
         needle = '  console.log(`Geometric mean: ${align(hz.toFixed(2), 5, "right")} runs/s`);'
@@ -298,14 +313,14 @@ def main():
         sunspider = monthly.build_sunspider()
         suites = [('sunspider', harness, sunspider),
                   ('octane', harness / 'test/octane', 'run.js'),
-                  ('web_tooling', wtb, score_driver), ('fixed_work', wtb, fixed_driver)]
+                  ('fixed_work', wtb, fixed_driver)]
         drivers = monthly.build_memory_drivers(wtb)
         data['input_sha256'] = {'wtb_original_cli': sha256(wtb / 'dist/cli.js'),
                                 'wtb_score_driver': sha256(score_driver),
                                 'wtb_memory_bundle': sha256(wtb / 'dist/memory.js'),
                                 'wtb_work_driver': sha256(fixed_driver),
                                 'octane_run': sha256(harness / 'test/octane/run.js')}
-        data['score_protocol'] = 'Fresh processes; score and fixed-work cohorts have no RSS sampler. WTB minSamples3/maxTime0; exact double score emitted after timing. Fixed work loads memory.js and directly invokes each of18 fn3 times, including bundle loading, without checkpoint waits or explicit GC.'
+        data['score_protocol'] = 'Three alternating original/candidate pairs of stock Octane and fixed WTB. Current-code full FSD12 once per suite during repetition2 as a diagnostic. No RSS sampler in timing. WTB score loops omitted; fixed work loads memory.js and invokes18 fn3 times including loading, without checkpoint waits or explicit GC.'
         data['memory_protocol'] = 'Separate fixed-work-smaps-rollup-v2, 10ms sampling on monitor CPU; active-window averages exclude checkpoint waits; peak is whole-process ru_maxrss; two explicit fulls only after workload_end.'
         for path in (harness / 'test/octane').glob('*.js'):
             path.read_bytes()
@@ -315,7 +330,7 @@ def main():
         for repeat in range(repetitions):
             order = ['original', 'candidate'] if repeat % 2 == 0 else ['candidate', 'original']
             for suite, directory, script in suites:
-                for mode in order:
+                for mode in order + (['current_full'] if repeat == 1 else []):
                     label = f'{architecture}-{suite}-{repeat + 1}-{mode}'
                     result, contents = process_measure(label, mode, commands[mode], directory, script,
                                                        envs[mode], report, cpu, monitor_cpu, suite != 'sunspider')
@@ -330,8 +345,9 @@ def main():
         write_json(report / 'measurements.json', data)
         for suite in ['octane', 'web_tooling']:
             directory, script, count, iterations = drivers[suite]
-            for mode in ['original', 'candidate']:
-                label = f'{architecture}-{suite}-memory-{mode}'
+            for memory_repeat, mode in enumerate(
+                    ['original', 'candidate', 'candidate', 'original']):
+                label = f'{architecture}-{suite}-memory-{memory_repeat + 1}-{mode}'
                 sample = measure_memory(label, 'escargot', commands[mode], directory, envs[mode],
                                         script, report, cpu, monitor_cpu)
                 assert len(sample['work_counts']) == count
@@ -345,13 +361,16 @@ def main():
                     tracer = int(re.search(r'^TracerPid:\s+(\d+)', path.read_text(), re.M).group(1))
                     assert tracer == 0, (label, tracer)
                     sample['checkpoint_tracer_pids'].append(tracer)
-                data['memory'].setdefault(suite, {})[mode] = aggregate([sample])
+                previous = data['memory'].get(suite, {}).get(mode, {}).get('samples', [])
+                data['memory'].setdefault(suite, {})[mode] = aggregate([*previous, sample])
                 write_json(report / 'measurements.json', data)
                 print('MEMORY', label, 'averageKiB', sample['average_rss_kib'],
                       'peakKiB', sample['peak_rss_kib'], flush=True)
-            assert data['memory'][suite]['original']['samples'][0]['work_signature'] == data['memory'][suite]['candidate']['samples'][0]['work_signature']
+            assert len({sample['work_signature']
+                        for group in data['memory'][suite].values()
+                        for sample in group['samples']}) == 1
         data['status'] = 'complete'
-        print('COLD EPOCH COMPLETE', architecture, flush=True)
+        print('SOURCE BUDGET COMPLETE', architecture, flush=True)
     except BaseException as error:
         data.update(status='failed', error=type(error).__name__ + ': ' + str(error))
         raise

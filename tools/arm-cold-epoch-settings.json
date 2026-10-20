@@ -1,7 +1,7 @@
 {
   "baseline_repository": "ksh8281/escargot",
   "baseline_revision": "ba2a00a5da24c202bfb1c02d6ff7a6a1666ebfbb",
-  "gc_revision": "0fa55dece6fd566759713657906239d42d955fee",
+  "gc_revision": "2ff8d45046a6a6ca4a85a739070753028423ead9",
   "settings": {
     "flags": [
       "--gc-generational"
@@ -10,7 +10,7 @@
       "GC_USE_GETWRITEWATCH": "0",
       "GC_FULL_FREQUENCY": "2",
       "GC_GENERATIONAL_ROOTS_FIRST": "0",
-      "GC_GENERATIONAL_DIRTY_PERCENT": "0",
+      "GC_GENERATIONAL_DIRTY_PERCENT": "50",
       "GC_GENERATIONAL_SURVIVAL_PERCENT": "0",
       "GC_GENERATIONAL_MARKED_BITS": "1",
       "GC_GENERATIONAL_LARGE_DEFER": "1",
@@ -31,21 +31,22 @@
       "ESCARGOT_BENCH_SEED": "1",
       "GC_BENCH_MANUAL_CODEBLOCK": "1",
       "GC_BENCH_NUMERIC_RO": "3",
-      "GC_BENCH_NUMERIC_RO_CAP": "64",
+      "GC_BENCH_NUMERIC_RO_CAP": "8",
       "GC_BENCH_NUMERIC_RO_OR": "1",
       "GC_BENCH_SOURCE_BATCH": "7",
-      "GC_BENCH_YOUNG_GROWTH_KIB": "512",
+      "GC_BENCH_YOUNG_GROWTH_KIB": "256",
       "GC_FREE_SPACE_DIVISOR": "14"
     }
   },
   "expected_source_files_sha256": {
-    "third_party/GCutil/alloc.c": "f120f7f277d22ba213db8acc8f841016a0f4ae48a32be88a02e911fad005e2d8",
+    "third_party/GCutil/alloc.c": "e57363ca8375dc17fff25fe44f968161cd61fecf17580d8c382cd45ccfb03512",
     "third_party/GCutil/malloc.c": "3b21cd3f7cf578ad3f040a470283ab45fb69ae2da613dea6ef3c8687c82bd0ed",
     "third_party/GCutil/mark.c": "f28057b38dd3f043fec58099a9063b1b03fe4f3018ac22eb2f89ccd1ff31eaa7",
     "src/runtime/ThreadLocal.cpp": "d53dbe35c9eb450930c260d6cc40a481cb7610185994aec0d175a8431d2b0803",
     "src/runtime/VMInstance.cpp": "91461d01a20fe703027860c77a7a919e9d04092824deefb46865178dc5b56f35",
     "third_party/GCutil/allchblk.c": "c8d90e767a7ec902cb366257b6aa1e4368d86aaf7fdb562eb4604882829b51bf",
-    "third_party/GCutil/include/private/gc_priv.h": "e056f686f04ff742571b878b15215fa807fc90234f772139fa2ac38b711b0c4b"
+    "third_party/GCutil/include/private/gc_priv.h": "e056f686f04ff742571b878b15215fa807fc90234f772139fa2ac38b711b0c4b",
+    "third_party/GCutil/numeric-ro.inc": "0029e0255ccf6c5a1f0e10be39ed448c28d85c50655f3d3f73bae9c35d001bf5"
   },
-  "scope": "Native Linux GCC CI: untouched original full at FSD12 versus minor-progress economic admission +bounded512KiB growth at FSD14. Score/work3 alternating pairs, separate RSS1 each per ABI. Same runtime source as frozen cold-epoch; no source/oracle/trace instrumentation."
+  "scope": "Native ARM32/64: untouched original full FSD12 versus source-budget minor policy FSD14, dirty50, growth256KiB, numericROcap8. Three paired Octane and fixed-WTB runs; current-code full-only FSD12 once per suite as a diagnostic. Separate RSS ABBA, two each. WTB Benchmark.Suite scores are omitted. No trace or oracle in timing."
 }
