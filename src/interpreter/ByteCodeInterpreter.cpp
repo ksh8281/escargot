@@ -3020,19 +3020,25 @@ NEVER_INLINE void InterpreterSlowPath::plusAdaptiveSlowCase(ExecutionState& stat
     const Value& right = registerFile[code->m_srcIndex1];
     Value& result = registerFile[code->m_dstIndex];
 
-    if (left.isInt32() && right.isInt32()) {
-        // Overflow does not predict the types of the next pair of operands.
-        // Also restore the int32 path after a string specialization misses.
+    constexpr ByteCodeRegisterIndex specializationLimit = 8;
+    constexpr ByteCodeRegisterIndex specialized = 1 << 8;
+    if (code->m_extraData & specialized) {
+        // A specialized opcode reaches this helper only after a guard miss.
+        // Disable it before any user code can recursively execute this site;
+        // never replace one specialization with another.
+        code->m_extraData = specializationLimit;
         code->changeOpcode(BinaryPlusOpcode);
+    }
+
+    if (left.isInt32() && right.isInt32()) {
+        // Overflow in the default int32 path is not a specialization miss.
         result = Value(Value::DoubleToIntConvertibleTestNeeds, left.asNumber() + right.asNumber());
         return;
     }
 
     const bool numbers = left.isNumber() && right.isNumber();
-    // Count only slow entries; steady-state int32/number/string execution
-    // does not write profiling data. After repeated misses, retain the int32
-    // fast path and handle all other inputs out of line without retagging.
-    constexpr ByteCodeRegisterIndex specializationLimit = 8;
+    // Preserve the original budget for finding the first supported pair.
+    // Once specialized, however, the first guard miss disables the site.
     if (code->m_extraData < specializationLimit) {
         ++code->m_extraData;
         Opcode opcode = BinaryPlusOpcode;
@@ -3043,8 +3049,12 @@ NEVER_INLINE void InterpreterSlowPath::plusAdaptiveSlowCase(ExecutionState& stat
                 opcode = BinaryPlusStringOpcode;
             }
         }
-        // Retag before any user code can recursively execute this site.
-        code->changeOpcode(opcode);
+        // Hot hits do not update state, and disabled sites keep the int32
+        // fast path. The flag also distinguishes a miss from int32 overflow.
+        if (opcode != BinaryPlusOpcode) {
+            code->m_extraData |= specialized;
+            code->changeOpcode(opcode);
+        }
     }
 
     result = numbers ? Value(Value::EncodeAsDouble, left.asNumber() + right.asNumber())
