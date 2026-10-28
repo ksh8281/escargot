@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import csv,hashlib,importlib.util,json,os,re,shutil,statistics,subprocess,sys
+import csv,hashlib,importlib.util,json,os,re,shutil,statistics,subprocess,sys,time
 from pathlib import Path
 PARENT='f4582b94d0ee7a9a3b21aeb08ca406b20209fef8'
 FILES=['src/codecache/CodeCache.cpp','src/interpreter/ByteCode.h','src/interpreter/ByteCodeGenerator.cpp','src/interpreter/ByteCodeInterpreter.cpp','src/runtime/EncodedValue.h']
@@ -13,26 +13,28 @@ def main():
  engine=work/('build-'+arch)/'escargot';shutil.copy2(engine,report/'pr'); saved={f:(source/f).read_bytes() for f in FILES}
  run(['git','fetch','--depth','1','origin',PARENT],report/'parent-fetch.log')
  try:
-  for f in FILES:(source/f).write_bytes(subprocess.check_output(['git','show',PARENT+':'+f]))
-  if arch=='arm32':
-   container=f"escargot-arm-benchmark-{os.environ['GITHUB_RUN_ID']}-{os.environ['GITHUB_RUN_ATTEMPT']}"
-   info=json.loads(subprocess.check_output(['docker','inspect',container]))[0]
-   assert any(m['Source']==str(work) and m['Destination']=='/work' for m in info['Mounts'])
-   run(['docker','start','-a',container],report/'parent-build.log')
-  else:run(['cmake','--build',work/('build-'+arch),'--target','escargot','--parallel','8'],report/'parent-build.log')
-  shutil.copy2(engine,report/'parent')
+  for label in ['initial','parent']:
+   selected=['src/runtime/EncodedValue.h'] if label=='initial' else FILES
+   for f in selected:(source/f).write_bytes(subprocess.check_output(['git','show',PARENT+':'+f]))
+   if arch=='arm32':
+    container=f"escargot-arm-benchmark-{os.environ['GITHUB_RUN_ID']}-{os.environ['GITHUB_RUN_ATTEMPT']}"
+    info=json.loads(subprocess.check_output(['docker','inspect',container]))[0]
+    assert any(m['Source']==str(work) and m['Destination']=='/work' for m in info['Mounts'])
+    run(['docker','start','-a',container],report/(label+'-build.log'))
+   else:run(['cmake','--build',work/('build-'+arch),'--target','escargot','--parallel','8'],report/(label+'-build.log'))
+   shutil.copy2(engine,report/label)
  finally:
   for f,content in saved.items():(source/f).write_bytes(content)
  def cmd(label):
   command=[str(report/label)]
   if arch=='arm32':command=[os.environ['BENCHMARK_RUNTIME_LOADER'],'--library-path',os.environ['BENCHMARK_RUNTIME_DIRECTORY'],*command]
   return command
- data={'architecture':arch,'parent_revision':PARENT,'pr_revision':'06aeed8f1c190e392ca5a9d4198e49d39759009b','protocol':'same-base paired diagnosis; original baseline not rerun; full standard suites once and fixed-work profiles three times','scores':{},'fixed':{},'binaries':{}}
- for label in ['parent','pr']:
+ data={'architecture':arch,'parent_revision':PARENT,'pr_revision':'06aeed8f1c190e392ca5a9d4198e49d39759009b','protocol':'same-base three-way diagnosis: parent, specialization only, current PR; original baseline not rerun; full standard suites once and fixed-work profiles three times','scores':{},'fixed':{},'binaries':{}}
+ for label in ['parent','initial','pr']:
   data['binaries'][label]={'sha256':hashlib.sha256((report/label).read_bytes()).hexdigest()}
   run(['size','-A',report/label],report/(label+'-size.txt'));run(['nm','-S','-C',report/label],report/(label+'-symbols.txt'))
  sys.path.insert(0,str(harness/'tools'));spec=importlib.util.spec_from_file_location('monthly',harness/'tools/monthly-engine-benchmark.py');monthly=importlib.util.module_from_spec(spec);spec.loader.exec_module(monthly);monthly.REPORT=report;monthly.ROOT=harness
- for label in (['parent','pr'] if arch=='arm32' else ['pr','parent']):
+ for label in (['parent','initial','pr'] if arch=='arm32' else ['pr','initial','parent']):
   data['scores'][label]={}
   for suite,directory,script,key,expected in [('octane',harness/'test/octane','run.js','subtests_scores',OCT),('wtb',harness/'test/web-tooling-benchmark','dist/cli.js','subtests_runs_per_second',WTB)]:
    result=monthly.measure(label+'-'+suite,cmd(label),directory,os.environ,script=script,kind='octane' if suite=='octane' else 'web_tooling');assert set(result[key])==expected
@@ -48,7 +50,7 @@ print('MEM_WORK_JSON '+JSON.stringify(counts));benchmarkCheckpoint('done');\n'''
  for suite,directory in [('octane',harness/'test/octane'),('wtb',harness/'test/web-tooling-benchmark')]:
   data['fixed'][suite]={}
   for iteration in range(3):
-   for label in (['parent','pr'] if iteration%2==0 else ['pr','parent']):
+   for label in (['parent','initial','pr'] if iteration%2==0 else ['pr','initial','parent']):
     name=f'{suite}-{label}-{iteration}';command=['taskset','-c',os.environ['BENCHMARK_CPU'],*cmd(label),str(report/(suite+'-fixed.js'))]
     run(['perf','stat','-x',';','-o',report/(name+'.csv'),'-e','cycles:u,instructions:u,branches:u,branch-misses:u,task-clock,context-switches','--',*command],report/(name+'.log'),directory)
     contents=(report/(name+'.log')).read_text();assert 'MEM_WORK_JSON ' in contents
@@ -56,15 +58,17 @@ print('MEM_WORK_JSON '+JSON.stringify(counts));benchmarkCheckpoint('done');\n'''
     stats={r[2]:float(r[0]) for r in csv.reader(open(report/(name+'.csv')),delimiter=';') if len(r)>3 and not r[0].startswith('<')}
     phases=[json.loads(x[6:]) for x in contents.splitlines() if x.startswith('PHASE ')]
     samples=data['fixed'][suite].setdefault(label,[]);samples.append({'stats':stats,'phases':phases,'counts':counts});(report/'results.json').write_text(json.dumps(data,indent=2)+'\n')
-  for label in ['parent','pr']:
+  for label in ['parent','initial','pr']:
    name=f'{suite}-{label}';command=['taskset','-c',os.environ['BENCHMARK_CPU'],*cmd(label),str(report/(suite+'-fixed.js'))]
-   run(['perf','record','-q','-k','CLOCK_REALTIME','-e','cycles:u','-F','999','-g','--call-graph','fp','-o',report/(name+'.data'),'--',*command],report/(name+'-record.log'),directory)
+   clock_offset=time.time()-time.monotonic()
+   run(['perf','record','-q','-k','CLOCK_MONOTONIC','-e','cycles:u','-F','999','-g','--call-graph','fp','-o',report/(name+'.data'),'--',*command],report/(name+'-record.log'),directory)
    run(['perf','report','--stdio','--no-children','--call-graph','none','--percent-limit','0.5','-i',report/(name+'.data')],report/(name+'-report.txt'))
    phases=[json.loads(x[6:]) for x in (report/(name+'-record.log')).read_text().splitlines() if x.startswith('PHASE ')]
+   (report/(name+'-phases.json')).write_text(json.dumps({'clock_offset':clock_offset,'phases':phases},indent=2)+'\n')
    for prev,phase in zip(phases,phases[1:]):
     target=phase['name'].removeprefix('test:')
     if target not in ['RegExp','Box2D','NavierStokes','terser','source-map','uglify-js']:continue
-    span=str(prev['time'])+','+str(phase['time'])
+    span=str(prev['time']-clock_offset)+','+str(phase['time']-clock_offset)
     run(['perf','report','--stdio','--no-children','--call-graph','none','--percent-limit','0.5','--time',span,'-i',report/(name+'.data')],report/(name+'-'+target+'-report.txt'),check=False)
    run(['perf','annotate','--stdio','--no-source','-i',report/(name+'.data')],report/(name+'-annotate.txt'),check=False)
  data['validated']=True;(report/'results.json').write_text(json.dumps(data,indent=2)+'\n');print('ROOTCAUSE_DONE',arch,flush=True)
