@@ -433,6 +433,11 @@ public:
                 return *this;
             }
         }
+        // Keep an existing number box reusable, but avoid allocating one for a Smi.
+        if (mutableFrom.isInt32() && EncodedValueImpl::PlatformSmiTagging::IsValidSmi(i32 = mutableFrom.asInt32())) {
+            m_data.payload = EncodedValueImpl::PlatformSmiTagging::IntToSmi(i32);
+            return *this;
+        }
         m_data.payload = static_cast<intptr_t>(tagPointer(new NumberInEncodedValue(mutableFrom), NumberPointerKind));
         return *this;
     }
@@ -675,6 +680,11 @@ public:
             reinterpret_cast<NumberInEncodedValue*>(untagPointer(bits))->setValue(mutableFrom);
             return *this;
         }
+        // Keep an existing number box reusable, but avoid allocating one for a Smi.
+        if (mutableFrom.isInt32() && EncodedValueImpl::PlatformSmiTagging::IsValidSmi(i32 = mutableFrom.asInt32())) {
+            setPayload(EncodedValueImpl::PlatformSmiTagging::IntToSmi(i32));
+            return *this;
+        }
         setPayload(static_cast<intptr_t>(tagPointer(new NumberInEncodedValue(mutableFrom), NumberPointerKind)));
         return *this;
     }
@@ -701,6 +711,11 @@ public:
         const uintptr_t offset = static_cast<uint32_t>(m_data.payload);
         if (offset > ValueLast && pointerKind(offset) == NumberPointerKind) {
             reinterpret_cast<NumberInEncodedValue*>(untagPointer(base + offset))->setValue(mutableFrom);
+            return;
+        }
+        // Keep an existing number box reusable, but avoid allocating one for a Smi.
+        if (mutableFrom.isInt32() && EncodedValueImpl::PlatformSmiTagging::IsValidSmi(i32 = mutableFrom.asInt32())) {
+            setPayloadWithBase(EncodedValueImpl::PlatformSmiTagging::IntToSmi(i32), base);
             return;
         }
         setPayloadWithBase(static_cast<intptr_t>(tagPointer(new NumberInEncodedValue(mutableFrom), NumberPointerKind)), base);

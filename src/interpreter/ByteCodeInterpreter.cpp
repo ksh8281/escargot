@@ -351,6 +351,7 @@ public:
     static void storeByNameWithAddress(ExecutionState& state, StoreByNameWithAddress* code, Value* registerFile);
 
     static Value plusSlowCase(ExecutionState& state, const Value& a, const Value& b);
+    static void plusAdaptiveSlowCase(ExecutionState& state, BinaryPlus* code, Value* registerFile);
     static Value minusSlowCase(ExecutionState& state, const Value& a, const Value& b);
     static Value multiplySlowCase(ExecutionState& state, const Value& a, const Value& b);
     static Value divisionSlowCase(ExecutionState& state, const Value& a, const Value& b);
@@ -719,14 +720,40 @@ ATTRIBUTE_NO_JUMP_TABLES Value Interpreter::interpret(ExecutionState* state, Byt
                 bool result = ArithmeticOperations<int32_t, int32_t, int32_t>::add(a, b, c);
                 if (LIKELY(result)) {
                     ret = Value(c);
-                } else {
-                    ret = Value(Value::EncodeAsDouble, (double)a + (double)b);
+                    ADD_PROGRAM_COUNTER(BinaryPlus);
+                    NEXT_INSTRUCTION();
                 }
-            } else if (v0.isNumber() && v1.isNumber()) {
-                // most cases are double
-                ret = Value(Value::EncodeAsDouble, v0.asNumber() + v1.asNumber());
+            }
+            InterpreterSlowPath::plusAdaptiveSlowCase(*state, code, registerFile);
+            ADD_PROGRAM_COUNTER(BinaryPlus);
+            NEXT_INSTRUCTION();
+        }
+
+        DEFINE_OPCODE(BinaryPlusNumber)
+            :
+        {
+            BinaryPlus* code = (BinaryPlus*)programCounter;
+            const Value& left = registerFile[code->m_srcIndex0];
+            const Value& right = registerFile[code->m_srcIndex1];
+            if (LIKELY(left.isNumber() && right.isNumber())) {
+                registerFile[code->m_dstIndex] = Value(Value::EncodeAsDouble, left.asNumber() + right.asNumber());
             } else {
-                ret = InterpreterSlowPath::plusSlowCase(*state, v0, v1);
+                InterpreterSlowPath::plusAdaptiveSlowCase(*state, code, registerFile);
+            }
+            ADD_PROGRAM_COUNTER(BinaryPlus);
+            NEXT_INSTRUCTION();
+        }
+
+        DEFINE_OPCODE(BinaryPlusString)
+            :
+        {
+            BinaryPlus* code = (BinaryPlus*)programCounter;
+            const Value& left = registerFile[code->m_srcIndex0];
+            const Value& right = registerFile[code->m_srcIndex1];
+            if (LIKELY(left.isString() && right.isString())) {
+                registerFile[code->m_dstIndex] = RopeString::createRopeString(left.asString(), right.asString(), state);
+            } else {
+                InterpreterSlowPath::plusAdaptiveSlowCase(*state, code, registerFile);
             }
             ADD_PROGRAM_COUNTER(BinaryPlus);
             NEXT_INSTRUCTION();
@@ -2988,6 +3015,44 @@ NEVER_INLINE void InterpreterSlowPath::storeByNameWithAddress(ExecutionState& st
     }
     GlobalObject* o = state.context()->globalObject();
     o->setThrowsExceptionWhenStrictMode(state, code->m_name, value, o);
+}
+
+NEVER_INLINE void InterpreterSlowPath::plusAdaptiveSlowCase(ExecutionState& state, BinaryPlus* code, Value* registerFile)
+{
+    const Value& left = registerFile[code->m_srcIndex0];
+    const Value& right = registerFile[code->m_srcIndex1];
+    Value& result = registerFile[code->m_dstIndex];
+
+    if (left.isInt32() && right.isInt32()) {
+        // Overflow does not predict the types of the next pair of operands.
+        // Also restore the int32 path after a string specialization misses.
+        code->changeOpcode(BinaryPlusOpcode);
+        result = Value(Value::DoubleToIntConvertibleTestNeeds, left.asNumber() + right.asNumber());
+        return;
+    }
+
+    const bool numbers = left.isNumber() && right.isNumber();
+    // Count non-int32 slow entries, including initial specialization.
+    // Steady-state int32/number/string execution does not write profiling data.
+    // Once the budget is exhausted, retain the int32 fast path and handle
+    // all other inputs out of line without retagging.
+    constexpr ByteCodeRegisterIndex specializationLimit = 8;
+    if (code->m_extraData < specializationLimit) {
+        ++code->m_extraData;
+        Opcode opcode = BinaryPlusOpcode;
+        if (code->m_extraData < specializationLimit) {
+            if (numbers) {
+                opcode = BinaryPlusNumberOpcode;
+            } else if (left.isString() && right.isString()) {
+                opcode = BinaryPlusStringOpcode;
+            }
+        }
+        // Retag before any user code can recursively execute this site.
+        code->changeOpcode(opcode);
+    }
+
+    result = numbers ? Value(Value::EncodeAsDouble, left.asNumber() + right.asNumber())
+                     : plusSlowCase(state, left, right);
 }
 
 NEVER_INLINE Value InterpreterSlowPath::plusSlowCase(ExecutionState& state, const Value& left, const Value& right)
