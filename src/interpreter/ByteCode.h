@@ -1062,7 +1062,7 @@ DEFINE_BINARY_OPERATION(Minus, "minus");
 DEFINE_BINARY_OPERATION(Mod, "mod");
 DEFINE_BINARY_OPERATION(Multiply, "multiply");
 DEFINE_BINARY_OPERATION(Plus, "plus");
-// Runtime specializations share the original operands and miss counter.
+// Runtime specializations share the original operands and specialization counter.
 class BinaryPlusNumber : public BinaryPlus {};
 class BinaryPlusString : public BinaryPlus {};
 COMPILE_ASSERT(sizeof(BinaryPlusNumber) == sizeof(BinaryPlus), "");

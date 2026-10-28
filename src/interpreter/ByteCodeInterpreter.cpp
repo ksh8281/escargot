@@ -3029,9 +3029,10 @@ NEVER_INLINE void InterpreterSlowPath::plusAdaptiveSlowCase(ExecutionState& stat
     }
 
     const bool numbers = left.isNumber() && right.isNumber();
-    // Count only slow entries; steady-state int32/number/string execution
-    // does not write profiling data. After repeated misses, retain the int32
-    // fast path and handle all other inputs out of line without retagging.
+    // Count non-int32 slow entries, including initial specialization.
+    // Steady-state int32/number/string execution does not write profiling data.
+    // Once the budget is exhausted, retain the int32 fast path and handle
+    // all other inputs out of line without retagging.
     constexpr ByteCodeRegisterIndex specializationLimit = 8;
     if (code->m_extraData < specializationLimit) {
         ++code->m_extraData;
