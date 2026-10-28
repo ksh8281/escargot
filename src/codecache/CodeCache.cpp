@@ -195,6 +195,7 @@ bool CodeCache::tryInitCacheList()
     std::string currentVer = ESCARGOT_VERSION;
 #endif
     ASSERT(currentVer.length() > 0);
+    currentVer += ":adaptive-plus-v1";
     size_t currentVerHash = std::hash<std::string>{}(currentVer);
     if (UNLIKELY(currentVerHash != cacheVerHash)) {
         ESCARGOT_LOG_ERROR("[CodeCache] Different Escargot version (current: %zu / cache: %zu), clear cache\n", currentVerHash, cacheVerHash);
@@ -915,6 +916,7 @@ bool CodeCache::writeCacheList()
     std::string version = ESCARGOT_VERSION;
 #endif
     ASSERT(version.length() > 0);
+    version += ":adaptive-plus-v1";
     size_t versionHash = std::hash<std::string>{}(version);
     if (UNLIKELY(fwrite(&versionHash, sizeof(size_t), 1, listFile) != 1)) {
         ESCARGOT_LOG_ERROR("[CodeCache] fwrite of %s failed\n", cacheListFilePath.data());
