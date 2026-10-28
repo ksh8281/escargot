@@ -720,11 +720,12 @@ ATTRIBUTE_NO_JUMP_TABLES Value Interpreter::interpret(ExecutionState* state, Byt
                 bool result = ArithmeticOperations<int32_t, int32_t, int32_t>::add(a, b, c);
                 if (LIKELY(result)) {
                     ret = Value(c);
-                    ADD_PROGRAM_COUNTER(BinaryPlus);
-                    NEXT_INSTRUCTION();
+                } else {
+                    ret = Value(Value::EncodeAsDouble, (double)a + (double)b);
                 }
+            } else {
+                InterpreterSlowPath::plusAdaptiveSlowCase(*state, code, registerFile);
             }
-            InterpreterSlowPath::plusAdaptiveSlowCase(*state, code, registerFile);
             ADD_PROGRAM_COUNTER(BinaryPlus);
             NEXT_INSTRUCTION();
         }
