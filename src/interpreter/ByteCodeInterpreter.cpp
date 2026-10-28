@@ -733,7 +733,7 @@ ATTRIBUTE_NO_JUMP_TABLES Value Interpreter::interpret(ExecutionState* state, Byt
             const Value& left = registerFile[code->m_srcIndex0];
             const Value& right = registerFile[code->m_srcIndex1];
             if (LIKELY(left.isNumber() && right.isNumber())) {
-                registerFile[code->m_dstIndex] = Value(Value::DoubleToIntConvertibleTestNeeds, left.asNumber() + right.asNumber());
+                registerFile[code->m_dstIndex] = Value(Value::EncodeAsDouble, left.asNumber() + right.asNumber());
             } else {
                 InterpreterSlowPath::plusAdaptiveSlowCase(*state, code, registerFile);
             }
@@ -3048,7 +3048,7 @@ NEVER_INLINE void InterpreterSlowPath::plusAdaptiveSlowCase(ExecutionState& stat
         code->changeOpcode(opcode);
     }
 
-    result = numbers ? Value(Value::DoubleToIntConvertibleTestNeeds, left.asNumber() + right.asNumber())
+    result = numbers ? Value(Value::EncodeAsDouble, left.asNumber() + right.asNumber())
                      : plusSlowCase(state, left, right);
 }
 

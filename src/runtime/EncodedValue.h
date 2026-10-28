@@ -421,7 +421,8 @@ public:
         }
 
         Value mutableFrom(from);
-        if (UNLIKELY(Value::isInt32ConvertibleDouble(mutableFrom.asNumber(), i32))) {
+        const bool int32Convertible = Value::isInt32ConvertibleDouble(mutableFrom.asNumber(), i32);
+        if (UNLIKELY(int32Convertible)) {
             mutableFrom = Value(i32);
         }
         const intptr_t payload = m_data.payload;
@@ -432,6 +433,11 @@ public:
                 reinterpret_cast<NumberInEncodedValue*>(untagPointer(bits))->setValue(mutableFrom);
                 return *this;
             }
+        }
+        // Keep an existing number box reusable, but avoid allocating one for a Smi.
+        if (int32Convertible && EncodedValueImpl::PlatformSmiTagging::IsValidSmi(i32)) {
+            m_data.payload = EncodedValueImpl::PlatformSmiTagging::IntToSmi(i32);
+            return *this;
         }
         m_data.payload = static_cast<intptr_t>(tagPointer(new NumberInEncodedValue(mutableFrom), NumberPointerKind));
         return *this;
@@ -666,13 +672,19 @@ public:
         }
 
         Value mutableFrom(from);
-        if (UNLIKELY(Value::isInt32ConvertibleDouble(mutableFrom.asNumber(), i32))) {
+        const bool int32Convertible = Value::isInt32ConvertibleDouble(mutableFrom.asNumber(), i32);
+        if (UNLIKELY(int32Convertible)) {
             mutableFrom = Value(i32);
         }
         const uintptr_t offset = static_cast<uint32_t>(m_data.payload);
         if (offset > ValueLast && pointerKind(offset) == NumberPointerKind) {
             const uintptr_t bits = cageBase() + offset;
             reinterpret_cast<NumberInEncodedValue*>(untagPointer(bits))->setValue(mutableFrom);
+            return *this;
+        }
+        // Keep an existing number box reusable, but avoid allocating one for a Smi.
+        if (int32Convertible && EncodedValueImpl::PlatformSmiTagging::IsValidSmi(i32)) {
+            setPayload(EncodedValueImpl::PlatformSmiTagging::IntToSmi(i32));
             return *this;
         }
         setPayload(static_cast<intptr_t>(tagPointer(new NumberInEncodedValue(mutableFrom), NumberPointerKind)));
@@ -695,12 +707,18 @@ public:
         }
 
         Value mutableFrom(from);
-        if (UNLIKELY(Value::isInt32ConvertibleDouble(mutableFrom.asNumber(), i32))) {
+        const bool int32Convertible = Value::isInt32ConvertibleDouble(mutableFrom.asNumber(), i32);
+        if (UNLIKELY(int32Convertible)) {
             mutableFrom = Value(i32);
         }
         const uintptr_t offset = static_cast<uint32_t>(m_data.payload);
         if (offset > ValueLast && pointerKind(offset) == NumberPointerKind) {
             reinterpret_cast<NumberInEncodedValue*>(untagPointer(base + offset))->setValue(mutableFrom);
+            return;
+        }
+        // Keep an existing number box reusable, but avoid allocating one for a Smi.
+        if (int32Convertible && EncodedValueImpl::PlatformSmiTagging::IsValidSmi(i32)) {
+            setPayloadWithBase(EncodedValueImpl::PlatformSmiTagging::IntToSmi(i32), base);
             return;
         }
         setPayloadWithBase(static_cast<intptr_t>(tagPointer(new NumberInEncodedValue(mutableFrom), NumberPointerKind)), base);
