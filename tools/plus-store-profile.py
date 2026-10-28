@@ -20,6 +20,7 @@ def main():
  try:
   shutil.copy2(engine,report/'tag')
   for label,revision in [('flag','7ca2e66a0a4007803c701e9fec5ca3cfb9bf3c9c'),('initial','0d3b48fc517591458e418b2445cc59c080b93874')]:
+   run(['git','fetch','--depth','1','origin',revision],report/(label+'-fetch.log'))
    content=subprocess.check_output(['git','show',revision+':src/runtime/EncodedValue.h'])
    header.write_bytes(content);(report/(label+'-EncodedValue.h')).write_bytes(content)
    run(['docker','start','-a',container],report/(label+'-build.log'))
