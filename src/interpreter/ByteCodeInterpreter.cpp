@@ -836,7 +836,9 @@ ATTRIBUTE_NO_JUMP_TABLES Value Interpreter::interpret(ExecutionState* state, Byt
             const Value& left = registerFile[code->m_srcIndex0];
             const Value& right = registerFile[code->m_srcIndex1];
             if (LIKELY(left.isNumber() && right.isNumber())) {
-                registerFile[code->m_dstIndex] = Value(Value::EncodeAsDouble, left.asNumber() - right.asNumber());
+                double leftNumber = UNLIKELY(left.isInt32()) ? left.asInt32() : left.asDouble();
+                double rightNumber = UNLIKELY(right.isInt32()) ? right.asInt32() : right.asDouble();
+                registerFile[code->m_dstIndex] = Value(Value::EncodeAsDouble, leftNumber - rightNumber);
             } else {
                 code->changeOpcode(BinaryMinusOpcode);
                 goto binaryMinusGeneric;
@@ -885,7 +887,9 @@ ATTRIBUTE_NO_JUMP_TABLES Value Interpreter::interpret(ExecutionState* state, Byt
             const Value& left = registerFile[code->m_srcIndex0];
             const Value& right = registerFile[code->m_srcIndex1];
             if (LIKELY(left.isNumber() && right.isNumber())) {
-                registerFile[code->m_dstIndex] = Value(Value::EncodeAsDouble, left.asNumber() * right.asNumber());
+                double leftNumber = UNLIKELY(left.isInt32()) ? left.asInt32() : left.asDouble();
+                double rightNumber = UNLIKELY(right.isInt32()) ? right.asInt32() : right.asDouble();
+                registerFile[code->m_dstIndex] = Value(Value::EncodeAsDouble, leftNumber * rightNumber);
             } else {
                 code->changeOpcode(BinaryMultiplyOpcode);
                 goto binaryMultiplyGeneric;
