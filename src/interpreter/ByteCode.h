@@ -96,7 +96,9 @@ struct GlobalVariableAccessCacheItem;
     F(BinaryPlusNumber)                                                             \
     F(BinaryPlusString)                                                             \
     F(BinaryMinus)                                                                  \
+    F(BinaryMinusNumber)                                                            \
     F(BinaryMultiply)                                                               \
+    F(BinaryMultiplyNumber)                                                         \
     F(BinaryDivision)                                                               \
     F(BinaryExponentiation)                                                         \
     F(BinaryMod)                                                                    \
@@ -1061,8 +1063,12 @@ DEFINE_BINARY_OPERATION(LeftShift, "left shift");
 DEFINE_BINARY_OPERATION(LessThan, "lessthan");
 DEFINE_BINARY_OPERATION(LessThanOrEqual, "lessthan or equal");
 DEFINE_BINARY_OPERATION(Minus, "minus");
+class BinaryMinusNumber : public BinaryMinus {};
+COMPILE_ASSERT(sizeof(BinaryMinusNumber) == sizeof(BinaryMinus), "");
 DEFINE_BINARY_OPERATION(Mod, "mod");
 DEFINE_BINARY_OPERATION(Multiply, "multiply");
+class BinaryMultiplyNumber : public BinaryMultiply {};
+COMPILE_ASSERT(sizeof(BinaryMultiplyNumber) == sizeof(BinaryMultiply), "");
 DEFINE_BINARY_OPERATION(Plus, "plus");
 // Runtime specializations share the original operands and specialization counter.
 class BinaryPlusNumber : public BinaryPlus {};
