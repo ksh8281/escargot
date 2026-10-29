@@ -100,6 +100,7 @@ struct GlobalVariableAccessCacheItem;
     F(BinaryMultiply)                                                               \
     F(BinaryMultiplyNumber)                                                         \
     F(BinaryDivision)                                                               \
+    F(BinaryDivisionInt32)                                                          \
     F(BinaryExponentiation)                                                         \
     F(BinaryMod)                                                                    \
     F(BinaryEqual)                                                                  \
@@ -1001,6 +1002,8 @@ DEFINE_BINARY_OPERATION(BitwiseAnd, "bitwise and");
 DEFINE_BINARY_OPERATION(BitwiseOr, "bitwise or");
 DEFINE_BINARY_OPERATION(BitwiseXor, "bitwise Xor");
 DEFINE_BINARY_OPERATION(Division, "division");
+class BinaryDivisionInt32 : public BinaryDivision {};
+COMPILE_ASSERT(sizeof(BinaryDivisionInt32) == sizeof(BinaryDivision), "");
 DEFINE_BINARY_OPERATION(Equal, "equal");
 DEFINE_BINARY_OPERATION(Exponentiation, "exponentiation operation");
 DEFINE_BINARY_OPERATION(GreaterThan, "greaterthan");

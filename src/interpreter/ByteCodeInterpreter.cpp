@@ -372,15 +372,15 @@ public:
         }
     }
     template <typename BinaryOperation>
-    static ALWAYS_INLINE void updateArithmeticSpecialization(BinaryOperation* code, bool numbers, Opcode numberOpcode)
+    static ALWAYS_INLINE void updateArithmeticSpecialization(BinaryOperation* code, bool specialize, Opcode specializedOpcode)
     {
-        // Count non-int32 generic entries, including initial specialization.
-        // Steady-state int32 and specialized number paths do not update the budget.
+        // Count generic learning entries, including initial specialization.
+        // Generic int32 fast paths and specialized hits do not update the budget.
         constexpr ByteCodeRegisterIndex specializationLimit = 8;
         if (code->m_extraData < specializationLimit) {
             ++code->m_extraData;
-            if (numbers && code->m_extraData < specializationLimit) {
-                code->changeOpcode(numberOpcode);
+            if (specialize && code->m_extraData < specializationLimit) {
+                code->changeOpcode(specializedOpcode);
             }
         }
     }
@@ -897,15 +897,33 @@ ATTRIBUTE_NO_JUMP_TABLES Value Interpreter::interpret(ExecutionState* state, Byt
         DEFINE_OPCODE(BinaryDivision)
             :
         {
+        binaryDivisionGeneric:
             BinaryDivision* code = (BinaryDivision*)programCounter;
             const Value& left = registerFile[code->m_srcIndex0];
             const Value& right = registerFile[code->m_srcIndex1];
             Value& ret = registerFile[code->m_dstIndex];
             if (LIKELY(left.isNumber() && right.isNumber())) {
-                // most cases are double
+                InterpreterSlowPath::updateArithmeticSpecialization(code, left.isInt32() && right.isInt32(), BinaryDivisionInt32Opcode);
                 ret = Value(Value::EncodeAsDouble, left.asNumber() / right.asNumber());
             } else {
+                InterpreterSlowPath::updateArithmeticSpecialization(code, false, BinaryDivisionInt32Opcode);
                 ret = InterpreterSlowPath::divisionSlowCase(*state, left, right);
+            }
+            ADD_PROGRAM_COUNTER(BinaryDivision);
+            NEXT_INSTRUCTION();
+        }
+
+        DEFINE_OPCODE(BinaryDivisionInt32)
+            :
+        {
+            BinaryDivision* code = (BinaryDivision*)programCounter;
+            const Value& left = registerFile[code->m_srcIndex0];
+            const Value& right = registerFile[code->m_srcIndex1];
+            if (LIKELY(left.isInt32() && right.isInt32())) {
+                registerFile[code->m_dstIndex] = Value(Value::EncodeAsDouble, (double)left.asInt32() / (double)right.asInt32());
+            } else {
+                code->changeOpcode(BinaryDivisionOpcode);
+                goto binaryDivisionGeneric;
             }
             ADD_PROGRAM_COUNTER(BinaryDivision);
             NEXT_INSTRUCTION();

@@ -807,6 +807,7 @@ void ByteCodeGenerator::relocateByteCode(ByteCodeBlock* block)
         case BinaryMultiplyOpcode:
         case BinaryMultiplyNumberOpcode:
         case BinaryDivisionOpcode:
+        case BinaryDivisionInt32Opcode:
         case BinaryModOpcode:
         case BinaryEqualOpcode:
         case BinaryLessThanOpcode:
