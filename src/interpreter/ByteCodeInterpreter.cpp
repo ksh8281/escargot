@@ -351,7 +351,6 @@ public:
     static void storeByNameWithAddress(ExecutionState& state, StoreByNameWithAddress* code, Value* registerFile);
 
     static Value plusSlowCase(ExecutionState& state, const Value& a, const Value& b);
-    static void plusAdaptiveSlowCase(ExecutionState& state, BinaryPlus* code, Value* registerFile);
     static ALWAYS_INLINE void updatePlusSpecialization(BinaryPlus* code, bool numbers, bool strings)
     {
         // Count non-int32 generic entries, including initial specialization.
@@ -729,6 +728,7 @@ ATTRIBUTE_NO_JUMP_TABLES Value Interpreter::interpret(ExecutionState* state, Byt
         DEFINE_OPCODE(BinaryPlus)
             :
         {
+        binaryPlusGeneric:
             BinaryPlus* code = (BinaryPlus*)programCounter;
             const Value& v0 = registerFile[code->m_srcIndex0];
             const Value& v1 = registerFile[code->m_srcIndex1];
@@ -763,7 +763,8 @@ ATTRIBUTE_NO_JUMP_TABLES Value Interpreter::interpret(ExecutionState* state, Byt
             if (LIKELY(left.isNumber() && right.isNumber())) {
                 registerFile[code->m_dstIndex] = Value(Value::EncodeAsDouble, left.asNumber() + right.asNumber());
             } else {
-                InterpreterSlowPath::plusAdaptiveSlowCase(*state, code, registerFile);
+                code->changeOpcode(BinaryPlusOpcode);
+                goto binaryPlusGeneric;
             }
             ADD_PROGRAM_COUNTER(BinaryPlus);
             NEXT_INSTRUCTION();
@@ -778,7 +779,8 @@ ATTRIBUTE_NO_JUMP_TABLES Value Interpreter::interpret(ExecutionState* state, Byt
             if (LIKELY(left.isString() && right.isString())) {
                 registerFile[code->m_dstIndex] = RopeString::createRopeString(left.asString(), right.asString(), state);
             } else {
-                InterpreterSlowPath::plusAdaptiveSlowCase(*state, code, registerFile);
+                code->changeOpcode(BinaryPlusOpcode);
+                goto binaryPlusGeneric;
             }
             ADD_PROGRAM_COUNTER(BinaryPlus);
             NEXT_INSTRUCTION();
@@ -3040,27 +3042,6 @@ NEVER_INLINE void InterpreterSlowPath::storeByNameWithAddress(ExecutionState& st
     }
     GlobalObject* o = state.context()->globalObject();
     o->setThrowsExceptionWhenStrictMode(state, code->m_name, value, o);
-}
-
-NEVER_INLINE void InterpreterSlowPath::plusAdaptiveSlowCase(ExecutionState& state, BinaryPlus* code, Value* registerFile)
-{
-    const Value& left = registerFile[code->m_srcIndex0];
-    const Value& right = registerFile[code->m_srcIndex1];
-    Value& result = registerFile[code->m_dstIndex];
-
-    if (left.isInt32() && right.isInt32()) {
-        // Overflow does not predict the types of the next pair of operands.
-        // Also restore the int32 path after a string specialization misses.
-        code->changeOpcode(BinaryPlusOpcode);
-        result = Value(Value::DoubleToIntConvertibleTestNeeds, left.asNumber() + right.asNumber());
-        return;
-    }
-
-    const bool numbers = left.isNumber() && right.isNumber();
-    updatePlusSpecialization(code, numbers, left.isString() && right.isString());
-
-    result = numbers ? Value(Value::EncodeAsDouble, left.asNumber() + right.asNumber())
-                     : plusSlowCase(state, left, right);
 }
 
 NEVER_INLINE Value InterpreterSlowPath::plusSlowCase(ExecutionState& state, const Value& left, const Value& right)
