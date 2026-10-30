@@ -164,7 +164,9 @@ struct GlobalVariableAccessCacheItem;
     F(JumpIfBoolean)                                                                \
     F(JumpIfUndefinedOrNull)                                                        \
     F(JumpIfNotLessThan)                                                            \
+    F(JumpIfNotLessThanNumber)                                                      \
     F(JumpIfNotLessThanOrEqual)                                                     \
+    F(JumpIfNotLessThanOrEqualNumber)                                               \
     F(JumpIfEqual)                                                                  \
     F(JumpIfStrictEqual)                                                            \
     F(JumpIfStrictNotEqual)                                                         \
@@ -2497,6 +2499,7 @@ public:
         , m_rightIndex(rightIndex)
         , m_containEqual(containEqual)
         , m_switched(switched)
+        , m_specializationCount(0)
     {
     }
 
@@ -2504,6 +2507,7 @@ public:
     ByteCodeRegisterIndex m_rightIndex;
     bool m_containEqual; // include equal condition (dump only; the opcode carries it)
     bool m_switched; // left and right operands are switched
+    uint8_t m_specializationCount; // non-int32 entries into the generic handler; bounds the Number retagging
 
 #ifndef NDEBUG
     void dump()
@@ -2528,9 +2532,13 @@ public:
 };
 
 class JumpIfNotLessThan : public JumpIfNotFulfilled {};
+class JumpIfNotLessThanNumber : public JumpIfNotFulfilled {};
 class JumpIfNotLessThanOrEqual : public JumpIfNotFulfilled {};
+class JumpIfNotLessThanOrEqualNumber : public JumpIfNotFulfilled {};
 COMPILE_ASSERT(sizeof(JumpIfNotLessThan) == sizeof(JumpIfNotFulfilled), "");
+COMPILE_ASSERT(sizeof(JumpIfNotLessThanNumber) == sizeof(JumpIfNotFulfilled), "");
 COMPILE_ASSERT(sizeof(JumpIfNotLessThanOrEqual) == sizeof(JumpIfNotFulfilled), "");
+COMPILE_ASSERT(sizeof(JumpIfNotLessThanOrEqualNumber) == sizeof(JumpIfNotFulfilled), "");
 
 class JumpIfEqual : public Jump {
 public:

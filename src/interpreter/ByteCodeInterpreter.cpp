@@ -437,6 +437,21 @@ public:
         }
     }
 
+    static ALWAYS_INLINE void updateRelationSpecialization(JumpIfNotFulfilled* code, bool numbers, Opcode numberOpcode)
+    {
+        // Same policy as the arithmetic opcodes: count non-int32 entries into the
+        // generic handler and retag to the Number form while the budget lasts, so
+        // a site that keeps flipping between Number and other types settles on
+        // the generic handler instead of thrashing its opcode.
+        constexpr uint8_t specializationLimit = 8;
+        if (code->m_specializationCount < specializationLimit) {
+            ++code->m_specializationCount;
+            if (numbers && code->m_specializationCount < specializationLimit) {
+                code->changeOpcode(numberOpcode);
+            }
+        }
+    }
+
     static Value minusSlowCase(ExecutionState& state, const Value& a, const Value& b, size_t programCounter);
     static Value multiplySlowCase(ExecutionState& state, const Value& a, const Value& b, size_t programCounter);
     static Value divisionSlowCase(ExecutionState& state, const Value& a, const Value& b, size_t programCounter);
@@ -538,9 +553,12 @@ public:
 #endif
 #endif
 
-private:
+    // Called directly by the relational jump handlers, which inline the int32 and
+    // Number tests themselves.
     static bool abstractLeftIsLessThanRightSlowCase(ExecutionState& state, const Value& left, const Value& right, bool switched, size_t programCounter);
     static bool abstractLeftIsLessThanEqualRightSlowCase(ExecutionState& state, const Value& left, const Value& right, bool switched, size_t programCounter);
+
+private:
     static void setObjectPreComputedCaseOperationSlowCase(ExecutionState& state, Object* originalObject, const Value& value, SetObjectPreComputedCase* code, ByteCodeBlock* block);
     static void setObjectPreComputedCaseOperationCacheMiss(ExecutionState& state, Object* obj, const Value& willBeObject, const Value& value, SetObjectPreComputedCase* code, ByteCodeBlock* block);
     static void defineObjectGetterSetterOperation(ExecutionState& state, ObjectDefineGetterSetter* code, ByteCodeBlock* byteCodeBlock, Value* registerFile, Object* object);
@@ -1586,12 +1604,23 @@ ATTRIBUTE_NO_JUMP_TABLES Value Interpreter::interpret(ExecutionState* state, Byt
         DEFINE_OPCODE(JumpIfNotLessThan)
             :
         {
+        jumpIfNotLessThanGeneric:
             JumpIfNotFulfilled* code = (JumpIfNotFulfilled*)programCounter;
             ASSERT(code->m_jumpPosition != SIZE_MAX);
             const Value& left = registerFile[code->m_leftIndex];
             const Value& right = registerFile[code->m_rightIndex];
+            bool result;
+            if (LIKELY(left.isInt32() && right.isInt32())) {
+                result = left.asInt32() < right.asInt32();
+            } else if (LIKELY(left.isNumber() && right.isNumber())) {
+                InterpreterSlowPath::updateRelationSpecialization(code, true, JumpIfNotLessThanNumberOpcode);
+                result = left.asNumber() < right.asNumber();
+            } else {
+                InterpreterSlowPath::updateRelationSpecialization(code, false, JumpIfNotLessThanNumberOpcode);
+                result = InterpreterSlowPath::abstractLeftIsLessThanRightSlowCase(*state, left, right, code->m_switched, programCounter);
+            }
             // Jump if the condition is NOT fulfilled
-            if (InterpreterSlowPath::abstractLeftIsLessThanRight(*state, left, right, code->m_switched, programCounter)) {
+            if (result) {
                 ADD_PROGRAM_COUNTER(JumpIfNotFulfilled);
             } else {
                 programCounter = code->m_jumpPosition;
@@ -1599,17 +1628,72 @@ ATTRIBUTE_NO_JUMP_TABLES Value Interpreter::interpret(ExecutionState* state, Byt
             NEXT_INSTRUCTION();
         }
 
-        DEFINE_OPCODE(JumpIfNotLessThanOrEqual)
+        DEFINE_OPCODE(JumpIfNotLessThanNumber)
             :
         {
             JumpIfNotFulfilled* code = (JumpIfNotFulfilled*)programCounter;
             ASSERT(code->m_jumpPosition != SIZE_MAX);
             const Value& left = registerFile[code->m_leftIndex];
             const Value& right = registerFile[code->m_rightIndex];
-            if (InterpreterSlowPath::abstractLeftIsLessThanEqualRight(*state, left, right, code->m_switched, programCounter)) {
+            if (LIKELY(left.isNumber() && right.isNumber())) {
+                double leftNumber = UNLIKELY(left.isInt32()) ? left.asInt32() : left.asDouble();
+                double rightNumber = UNLIKELY(right.isInt32()) ? right.asInt32() : right.asDouble();
+                if (leftNumber < rightNumber) {
+                    ADD_PROGRAM_COUNTER(JumpIfNotFulfilled);
+                } else {
+                    programCounter = code->m_jumpPosition;
+                }
+            } else {
+                code->changeOpcode(JumpIfNotLessThanOpcode);
+                goto jumpIfNotLessThanGeneric;
+            }
+            NEXT_INSTRUCTION();
+        }
+
+        DEFINE_OPCODE(JumpIfNotLessThanOrEqual)
+            :
+        {
+        jumpIfNotLessThanOrEqualGeneric:
+            JumpIfNotFulfilled* code = (JumpIfNotFulfilled*)programCounter;
+            ASSERT(code->m_jumpPosition != SIZE_MAX);
+            const Value& left = registerFile[code->m_leftIndex];
+            const Value& right = registerFile[code->m_rightIndex];
+            bool result;
+            if (LIKELY(left.isInt32() && right.isInt32())) {
+                result = left.asInt32() <= right.asInt32();
+            } else if (LIKELY(left.isNumber() && right.isNumber())) {
+                InterpreterSlowPath::updateRelationSpecialization(code, true, JumpIfNotLessThanOrEqualNumberOpcode);
+                result = left.asNumber() <= right.asNumber();
+            } else {
+                InterpreterSlowPath::updateRelationSpecialization(code, false, JumpIfNotLessThanOrEqualNumberOpcode);
+                result = InterpreterSlowPath::abstractLeftIsLessThanEqualRightSlowCase(*state, left, right, code->m_switched, programCounter);
+            }
+            if (result) {
                 ADD_PROGRAM_COUNTER(JumpIfNotFulfilled);
             } else {
                 programCounter = code->m_jumpPosition;
+            }
+            NEXT_INSTRUCTION();
+        }
+
+        DEFINE_OPCODE(JumpIfNotLessThanOrEqualNumber)
+            :
+        {
+            JumpIfNotFulfilled* code = (JumpIfNotFulfilled*)programCounter;
+            ASSERT(code->m_jumpPosition != SIZE_MAX);
+            const Value& left = registerFile[code->m_leftIndex];
+            const Value& right = registerFile[code->m_rightIndex];
+            if (LIKELY(left.isNumber() && right.isNumber())) {
+                double leftNumber = UNLIKELY(left.isInt32()) ? left.asInt32() : left.asDouble();
+                double rightNumber = UNLIKELY(right.isInt32()) ? right.asInt32() : right.asDouble();
+                if (leftNumber <= rightNumber) {
+                    ADD_PROGRAM_COUNTER(JumpIfNotFulfilled);
+                } else {
+                    programCounter = code->m_jumpPosition;
+                }
+            } else {
+                code->changeOpcode(JumpIfNotLessThanOrEqualOpcode);
+                goto jumpIfNotLessThanOrEqualGeneric;
             }
             NEXT_INSTRUCTION();
         }

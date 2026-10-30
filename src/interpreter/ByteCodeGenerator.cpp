@@ -718,7 +718,9 @@ void ByteCodeGenerator::relocateByteCode(ByteCodeBlock* block)
             break;
         }
         case JumpIfNotLessThanOpcode:
-        case JumpIfNotLessThanOrEqualOpcode: {
+        case JumpIfNotLessThanNumberOpcode:
+        case JumpIfNotLessThanOrEqualOpcode:
+        case JumpIfNotLessThanOrEqualNumberOpcode: {
             JumpIfNotFulfilled* cd = (JumpIfNotFulfilled*)currentCode;
             cd->m_jumpPosition = cd->m_jumpPosition + codeBase;
             ASSIGN_STACKINDEX_IF_NEEDED(cd->m_leftIndex, stackBase, stackBaseWillBe, stackVariableSize);
