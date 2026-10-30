@@ -452,6 +452,35 @@ public:
         }
     }
 
+    // Strict equality goes the other way round: int32 pairs are the specialized
+    // form and the generic handler is the fallback, so the generic handler
+    // counts int32 observations and retags to the Int32 form while the budget
+    // lasts; an Int32 miss retags back without touching the budget.
+    static ALWAYS_INLINE void updateStrictEqualJumpSpecialization(JumpIfEqual* code, Opcode int32Opcode)
+    {
+        constexpr uint8_t specializationLimit = 8;
+        if (code->m_specializationCount < specializationLimit) {
+            ++code->m_specializationCount;
+            if (code->m_specializationCount < specializationLimit) {
+                code->changeOpcode(int32Opcode);
+            }
+        }
+    }
+
+    static ALWAYS_INLINE void updateStrictEqualSpecialization(BinaryStrictEqual* code)
+    {
+        // The counter lives in the high byte of m_extraData; bit 0 is the negate flag.
+        constexpr uint16_t specializationLimit = 8;
+        uint16_t count = code->m_extraData >> 8;
+        if (count < specializationLimit) {
+            ++count;
+            code->m_extraData = (code->m_extraData & 0xff) | (count << 8);
+            if (count < specializationLimit) {
+                code->changeOpcode(BinaryStrictEqualInt32Opcode);
+            }
+        }
+    }
+
     static Value minusSlowCase(ExecutionState& state, const Value& a, const Value& b, size_t programCounter);
     static Value multiplySlowCase(ExecutionState& state, const Value& a, const Value& b, size_t programCounter);
     static Value divisionSlowCase(ExecutionState& state, const Value& a, const Value& b, size_t programCounter);
@@ -1017,10 +1046,34 @@ ATTRIBUTE_NO_JUMP_TABLES Value Interpreter::interpret(ExecutionState* state, Byt
         DEFINE_OPCODE(BinaryStrictEqual)
             :
         {
+        binaryStrictEqualGeneric:
             BinaryStrictEqual* code = (BinaryStrictEqual*)programCounter;
             const Value& left = registerFile[code->m_srcIndex0];
             const Value& right = registerFile[code->m_srcIndex1];
-            registerFile[code->m_dstIndex] = Value(static_cast<bool>(left.equalsTo(*state, right) ^ code->m_extraData));
+            // Keep the generic body shaped exactly as before (equalsTo first) so
+            // the string/object paths stay inline; the int32 test only drives
+            // the retag and is off the hot path of a non-int32 site.
+            bool result = left.equalsTo(*state, right);
+            if (UNLIKELY(left.isInt32() && right.isInt32())) {
+                InterpreterSlowPath::updateStrictEqualSpecialization(code);
+            }
+            registerFile[code->m_dstIndex] = Value(static_cast<bool>(result ^ (code->m_extraData & 1)));
+            ADD_PROGRAM_COUNTER(BinaryStrictEqual);
+            NEXT_INSTRUCTION();
+        }
+
+        DEFINE_OPCODE(BinaryStrictEqualInt32)
+            :
+        {
+            BinaryStrictEqual* code = (BinaryStrictEqual*)programCounter;
+            const Value& left = registerFile[code->m_srcIndex0];
+            const Value& right = registerFile[code->m_srcIndex1];
+            if (LIKELY(left.isInt32() && right.isInt32())) {
+                registerFile[code->m_dstIndex] = Value(static_cast<bool>((left.asInt32() == right.asInt32()) ^ (code->m_extraData & 1)));
+            } else {
+                code->changeOpcode(BinaryStrictEqualOpcode);
+                goto binaryStrictEqualGeneric;
+            }
             ADD_PROGRAM_COUNTER(BinaryStrictEqual);
             NEXT_INSTRUCTION();
         }
@@ -1701,11 +1754,16 @@ ATTRIBUTE_NO_JUMP_TABLES Value Interpreter::interpret(ExecutionState* state, Byt
         DEFINE_OPCODE(JumpIfStrictEqual)
             :
         {
+        jumpIfStrictEqualGeneric:
             JumpIfEqual* code = (JumpIfEqual*)programCounter;
             ASSERT(code->m_jumpPosition != SIZE_MAX);
             const Value& left = registerFile[code->m_registerIndex0];
             const Value& right = registerFile[code->m_registerIndex1];
-            if (left.equalsTo(*state, right)) {
+            bool result = left.equalsTo(*state, right);
+            if (UNLIKELY(left.isInt32() && right.isInt32())) {
+                InterpreterSlowPath::updateStrictEqualJumpSpecialization(code, JumpIfStrictEqualInt32Opcode);
+            }
+            if (result) {
                 programCounter = code->m_jumpPosition;
             } else {
                 ADD_PROGRAM_COUNTER(JumpIfEqual);
@@ -1713,17 +1771,62 @@ ATTRIBUTE_NO_JUMP_TABLES Value Interpreter::interpret(ExecutionState* state, Byt
             NEXT_INSTRUCTION();
         }
 
-        DEFINE_OPCODE(JumpIfStrictNotEqual)
+        DEFINE_OPCODE(JumpIfStrictEqualInt32)
             :
         {
             JumpIfEqual* code = (JumpIfEqual*)programCounter;
             ASSERT(code->m_jumpPosition != SIZE_MAX);
             const Value& left = registerFile[code->m_registerIndex0];
             const Value& right = registerFile[code->m_registerIndex1];
-            if (left.equalsTo(*state, right)) {
+            if (LIKELY(left.isInt32() && right.isInt32())) {
+                if (left.asInt32() == right.asInt32()) {
+                    programCounter = code->m_jumpPosition;
+                } else {
+                    ADD_PROGRAM_COUNTER(JumpIfEqual);
+                }
+            } else {
+                code->changeOpcode(JumpIfStrictEqualOpcode);
+                goto jumpIfStrictEqualGeneric;
+            }
+            NEXT_INSTRUCTION();
+        }
+
+        DEFINE_OPCODE(JumpIfStrictNotEqual)
+            :
+        {
+        jumpIfStrictNotEqualGeneric:
+            JumpIfEqual* code = (JumpIfEqual*)programCounter;
+            ASSERT(code->m_jumpPosition != SIZE_MAX);
+            const Value& left = registerFile[code->m_registerIndex0];
+            const Value& right = registerFile[code->m_registerIndex1];
+            bool result = left.equalsTo(*state, right);
+            if (UNLIKELY(left.isInt32() && right.isInt32())) {
+                InterpreterSlowPath::updateStrictEqualJumpSpecialization(code, JumpIfStrictNotEqualInt32Opcode);
+            }
+            if (result) {
                 ADD_PROGRAM_COUNTER(JumpIfEqual);
             } else {
                 programCounter = code->m_jumpPosition;
+            }
+            NEXT_INSTRUCTION();
+        }
+
+        DEFINE_OPCODE(JumpIfStrictNotEqualInt32)
+            :
+        {
+            JumpIfEqual* code = (JumpIfEqual*)programCounter;
+            ASSERT(code->m_jumpPosition != SIZE_MAX);
+            const Value& left = registerFile[code->m_registerIndex0];
+            const Value& right = registerFile[code->m_registerIndex1];
+            if (LIKELY(left.isInt32() && right.isInt32())) {
+                if (left.asInt32() == right.asInt32()) {
+                    ADD_PROGRAM_COUNTER(JumpIfEqual);
+                } else {
+                    programCounter = code->m_jumpPosition;
+                }
+            } else {
+                code->changeOpcode(JumpIfStrictNotEqualOpcode);
+                goto jumpIfStrictNotEqualGeneric;
             }
             NEXT_INSTRUCTION();
         }

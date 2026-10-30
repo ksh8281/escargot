@@ -108,6 +108,7 @@ struct GlobalVariableAccessCacheItem;
     F(BinaryGreaterThan)                                                            \
     F(BinaryGreaterThanOrEqual)                                                     \
     F(BinaryStrictEqual)                                                            \
+    F(BinaryStrictEqualInt32)                                                       \
     F(BinaryBitwiseAnd)                                                             \
     F(BinaryBitwiseOr)                                                              \
     F(BinaryBitwiseXor)                                                             \
@@ -169,7 +170,9 @@ struct GlobalVariableAccessCacheItem;
     F(JumpIfNotLessThanOrEqualNumber)                                               \
     F(JumpIfEqual)                                                                  \
     F(JumpIfStrictEqual)                                                            \
+    F(JumpIfStrictEqualInt32)                                                       \
     F(JumpIfStrictNotEqual)                                                         \
+    F(JumpIfStrictNotEqualInt32)                                                    \
     F(SwitchOnInt32)                                                                \
     F(SwitchOnValue)                                                                \
     F(Call)                                                                         \
@@ -1082,6 +1085,10 @@ COMPILE_ASSERT(sizeof(BinaryPlusNumber) == sizeof(BinaryPlus), "");
 COMPILE_ASSERT(sizeof(BinaryPlusString) == sizeof(BinaryPlus), "");
 DEFINE_BINARY_OPERATION(SignedRightShift, "signed right shift");
 DEFINE_BINARY_OPERATION(StrictEqual, "strict equal");
+// BinaryStrictEqual::m_extraData: bit 0 negates the result (!==), the high
+// byte counts int32 observations that drive the Int32 retagging.
+class BinaryStrictEqualInt32 : public BinaryStrictEqual {};
+COMPILE_ASSERT(sizeof(BinaryStrictEqualInt32) == sizeof(BinaryStrictEqual), "");
 DEFINE_BINARY_OPERATION(UnsignedRightShift, "unsigned right shift");
 
 #ifdef ESCARGOT_DEBUGGER
@@ -2551,6 +2558,7 @@ public:
         , m_registerIndex1(registerIndex1)
         , m_isStrict(isStrict)
         , m_shouldNegate(shouldNegate)
+        , m_specializationCount(0)
     {
     }
 
@@ -2558,6 +2566,7 @@ public:
     ByteCodeRegisterIndex m_registerIndex1;
     bool m_isStrict; // dump only; the opcode carries it
     bool m_shouldNegate; // condition should meet NOT EQUAL (read at run time only by the loose opcode)
+    uint8_t m_specializationCount; // int32 observations in the strict generic handlers; bounds the Int32 retagging
 
 #ifndef NDEBUG
     void dump()
@@ -2582,9 +2591,13 @@ public:
 };
 
 class JumpIfStrictEqual : public JumpIfEqual {};
+class JumpIfStrictEqualInt32 : public JumpIfEqual {};
 class JumpIfStrictNotEqual : public JumpIfEqual {};
+class JumpIfStrictNotEqualInt32 : public JumpIfEqual {};
 COMPILE_ASSERT(sizeof(JumpIfStrictEqual) == sizeof(JumpIfEqual), "");
+COMPILE_ASSERT(sizeof(JumpIfStrictEqualInt32) == sizeof(JumpIfEqual), "");
 COMPILE_ASSERT(sizeof(JumpIfStrictNotEqual) == sizeof(JumpIfEqual), "");
+COMPILE_ASSERT(sizeof(JumpIfStrictNotEqualInt32) == sizeof(JumpIfEqual), "");
 
 class Call : public ByteCode {
 public:

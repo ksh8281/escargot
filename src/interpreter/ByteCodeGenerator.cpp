@@ -729,7 +729,9 @@ void ByteCodeGenerator::relocateByteCode(ByteCodeBlock* block)
         }
         case JumpIfEqualOpcode:
         case JumpIfStrictEqualOpcode:
-        case JumpIfStrictNotEqualOpcode: {
+        case JumpIfStrictEqualInt32Opcode:
+        case JumpIfStrictNotEqualOpcode:
+        case JumpIfStrictNotEqualInt32Opcode: {
             JumpIfEqual* cd = (JumpIfEqual*)currentCode;
             cd->m_jumpPosition = cd->m_jumpPosition + codeBase;
             ASSIGN_STACKINDEX_IF_NEEDED(cd->m_registerIndex0, stackBase, stackBaseWillBe, stackVariableSize);
@@ -819,6 +821,7 @@ void ByteCodeGenerator::relocateByteCode(ByteCodeBlock* block)
         case BinaryGreaterThanOpcode:
         case BinaryGreaterThanOrEqualOpcode:
         case BinaryStrictEqualOpcode:
+        case BinaryStrictEqualInt32Opcode:
         case BinaryBitwiseAndOpcode:
         case BinaryBitwiseOrOpcode:
         case BinaryBitwiseXorOpcode:
