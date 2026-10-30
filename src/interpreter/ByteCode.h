@@ -163,8 +163,11 @@ struct GlobalVariableAccessCacheItem;
     F(JumpComplexCase)                                                              \
     F(JumpIfBoolean)                                                                \
     F(JumpIfUndefinedOrNull)                                                        \
-    F(JumpIfNotFulfilled)                                                           \
+    F(JumpIfNotLessThan)                                                            \
+    F(JumpIfNotLessThanOrEqual)                                                     \
     F(JumpIfEqual)                                                                  \
+    F(JumpIfStrictEqual)                                                            \
+    F(JumpIfStrictNotEqual)                                                         \
     F(SwitchOnInt32)                                                                \
     F(SwitchOnValue)                                                                \
     F(Call)                                                                         \
@@ -2486,9 +2489,10 @@ public:
 
 class JumpIfNotFulfilled : public Jump {
 public:
-    // compare if left value is less than (or equal) right value
+    // compare if left value is less than (or equal) right value. The `<` vs
+    // `<=` choice is folded into the opcode so the handlers never branch on it.
     JumpIfNotFulfilled(const ByteCodeLOC& loc, const size_t leftIndex, const size_t rightIndex, bool containEqual, bool switched)
-        : Jump(Opcode::JumpIfNotFulfilledOpcode, loc, SIZE_MAX)
+        : Jump(containEqual ? Opcode::JumpIfNotLessThanOrEqualOpcode : Opcode::JumpIfNotLessThanOpcode, loc, SIZE_MAX)
         , m_leftIndex(leftIndex)
         , m_rightIndex(rightIndex)
         , m_containEqual(containEqual)
@@ -2498,7 +2502,7 @@ public:
 
     ByteCodeRegisterIndex m_leftIndex;
     ByteCodeRegisterIndex m_rightIndex;
-    bool m_containEqual; // include equal condition
+    bool m_containEqual; // include equal condition (dump only; the opcode carries it)
     bool m_switched; // left and right operands are switched
 
 #ifndef NDEBUG
@@ -2523,10 +2527,18 @@ public:
 #endif
 };
 
+class JumpIfNotLessThan : public JumpIfNotFulfilled {};
+class JumpIfNotLessThanOrEqual : public JumpIfNotFulfilled {};
+COMPILE_ASSERT(sizeof(JumpIfNotLessThan) == sizeof(JumpIfNotFulfilled), "");
+COMPILE_ASSERT(sizeof(JumpIfNotLessThanOrEqual) == sizeof(JumpIfNotFulfilled), "");
+
 class JumpIfEqual : public Jump {
 public:
+    // Strict comparisons are by far the common case, so they get their own
+    // opcodes with the negation folded in; the loose form keeps reading
+    // m_shouldNegate at run time.
     JumpIfEqual(const ByteCodeLOC& loc, const size_t registerIndex0, const size_t registerIndex1, bool isStrict, bool shouldNegate)
-        : Jump(Opcode::JumpIfEqualOpcode, loc, SIZE_MAX)
+        : Jump(isStrict ? (shouldNegate ? Opcode::JumpIfStrictNotEqualOpcode : Opcode::JumpIfStrictEqualOpcode) : Opcode::JumpIfEqualOpcode, loc, SIZE_MAX)
         , m_registerIndex0(registerIndex0)
         , m_registerIndex1(registerIndex1)
         , m_isStrict(isStrict)
@@ -2536,8 +2548,8 @@ public:
 
     ByteCodeRegisterIndex m_registerIndex0;
     ByteCodeRegisterIndex m_registerIndex1;
-    bool m_isStrict;
-    bool m_shouldNegate; // condition should meet NOT EQUAL
+    bool m_isStrict; // dump only; the opcode carries it
+    bool m_shouldNegate; // condition should meet NOT EQUAL (read at run time only by the loose opcode)
 
 #ifndef NDEBUG
     void dump()
@@ -2560,6 +2572,11 @@ public:
     }
 #endif
 };
+
+class JumpIfStrictEqual : public JumpIfEqual {};
+class JumpIfStrictNotEqual : public JumpIfEqual {};
+COMPILE_ASSERT(sizeof(JumpIfStrictEqual) == sizeof(JumpIfEqual), "");
+COMPILE_ASSERT(sizeof(JumpIfStrictNotEqual) == sizeof(JumpIfEqual), "");
 
 class Call : public ByteCode {
 public:

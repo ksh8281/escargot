@@ -1583,18 +1583,61 @@ ATTRIBUTE_NO_JUMP_TABLES Value Interpreter::interpret(ExecutionState* state, Byt
             JUMP_INSTRUCTION(SwitchOnInt32SlowCase);
         }
 
-        DEFINE_OPCODE(JumpIfNotFulfilled)
+        DEFINE_OPCODE(JumpIfNotLessThan)
             :
         {
             JumpIfNotFulfilled* code = (JumpIfNotFulfilled*)programCounter;
             ASSERT(code->m_jumpPosition != SIZE_MAX);
             const Value& left = registerFile[code->m_leftIndex];
             const Value& right = registerFile[code->m_rightIndex];
-            bool result = code->m_containEqual ? InterpreterSlowPath::abstractLeftIsLessThanEqualRight(*state, left, right, code->m_switched, programCounter) : InterpreterSlowPath::abstractLeftIsLessThanRight(*state, left, right, code->m_switched, programCounter);
-
             // Jump if the condition is NOT fulfilled
-            if (result) {
+            if (InterpreterSlowPath::abstractLeftIsLessThanRight(*state, left, right, code->m_switched, programCounter)) {
                 ADD_PROGRAM_COUNTER(JumpIfNotFulfilled);
+            } else {
+                programCounter = code->m_jumpPosition;
+            }
+            NEXT_INSTRUCTION();
+        }
+
+        DEFINE_OPCODE(JumpIfNotLessThanOrEqual)
+            :
+        {
+            JumpIfNotFulfilled* code = (JumpIfNotFulfilled*)programCounter;
+            ASSERT(code->m_jumpPosition != SIZE_MAX);
+            const Value& left = registerFile[code->m_leftIndex];
+            const Value& right = registerFile[code->m_rightIndex];
+            if (InterpreterSlowPath::abstractLeftIsLessThanEqualRight(*state, left, right, code->m_switched, programCounter)) {
+                ADD_PROGRAM_COUNTER(JumpIfNotFulfilled);
+            } else {
+                programCounter = code->m_jumpPosition;
+            }
+            NEXT_INSTRUCTION();
+        }
+
+        DEFINE_OPCODE(JumpIfStrictEqual)
+            :
+        {
+            JumpIfEqual* code = (JumpIfEqual*)programCounter;
+            ASSERT(code->m_jumpPosition != SIZE_MAX);
+            const Value& left = registerFile[code->m_registerIndex0];
+            const Value& right = registerFile[code->m_registerIndex1];
+            if (left.equalsTo(*state, right)) {
+                programCounter = code->m_jumpPosition;
+            } else {
+                ADD_PROGRAM_COUNTER(JumpIfEqual);
+            }
+            NEXT_INSTRUCTION();
+        }
+
+        DEFINE_OPCODE(JumpIfStrictNotEqual)
+            :
+        {
+            JumpIfEqual* code = (JumpIfEqual*)programCounter;
+            ASSERT(code->m_jumpPosition != SIZE_MAX);
+            const Value& left = registerFile[code->m_registerIndex0];
+            const Value& right = registerFile[code->m_registerIndex1];
+            if (left.equalsTo(*state, right)) {
+                ADD_PROGRAM_COUNTER(JumpIfEqual);
             } else {
                 programCounter = code->m_jumpPosition;
             }
@@ -1608,15 +1651,9 @@ ATTRIBUTE_NO_JUMP_TABLES Value Interpreter::interpret(ExecutionState* state, Byt
             ASSERT(code->m_jumpPosition != SIZE_MAX);
             const Value& left = registerFile[code->m_registerIndex0];
             const Value& right = registerFile[code->m_registerIndex1];
-            bool result;
-            if (code->m_isStrict) {
-                result = left.equalsTo(*state, right);
-            } else {
-                // loose equality can run ToPrimitive on an object operand
-                PUBLISH_PROGRAM_COUNTER();
-                result = left.abstractEqualsTo(*state, right);
-            }
-
+            // loose equality can run ToPrimitive on an object operand
+            PUBLISH_PROGRAM_COUNTER();
+            bool result = left.abstractEqualsTo(*state, right);
             if (result ^ code->m_shouldNegate) {
                 programCounter = code->m_jumpPosition;
             } else {
