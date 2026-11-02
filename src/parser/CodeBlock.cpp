@@ -57,6 +57,7 @@ InterpretedCodeBlockWithRareData::InterpretedCodeBlockWithRareData(Context* ctx,
     : InterpretedCodeBlock(ctx, script, scopeCtx, isEvalCode, isEvalCodeInFunction)
     , m_rareData(new InterpretedCodeBlockRareData(scopeCtx->m_varNamesMap, scopeCtx->m_classPrivateNames))
 {
+    GC_manual_kind_dirty(this);
     ASSERT(scopeCtx->m_needRareData);
 #ifdef ESCARGOT_DEBUGGER
     m_rareData->m_debuggerLineStart = scopeCtx->m_debuggerLineStart;
@@ -67,6 +68,7 @@ InterpretedCodeBlockWithRareData::InterpretedCodeBlockWithRareData(Context* ctx,
     : InterpretedCodeBlock(ctx, script, scopeCtx, parentBlock, isEvalCode, isEvalCodeInFunction)
     , m_rareData(new InterpretedCodeBlockRareData(scopeCtx->m_varNamesMap, scopeCtx->m_classPrivateNames))
 {
+    GC_manual_kind_dirty(this);
     ASSERT(scopeCtx->m_needRareData);
 #ifdef ESCARGOT_DEBUGGER
     m_rareData->m_debuggerLineStart = scopeCtx->m_debuggerLineStart;
@@ -112,6 +114,7 @@ void InterpretedCodeBlock::initBlockScopeInformation(ASTScopeContext* scopeCtx)
                        b->m_names.size())
                        ->isGenericBlockInfo());
             m_blockInfos = BlockInfo::genericBlockInfoArray(m_canAllocateEnvironmentOnStack, false);
+            GC_manual_kind_dirty(this);
             m_blockInfosLength = 1;
             return;
         }
@@ -123,6 +126,7 @@ void InterpretedCodeBlock::initBlockScopeInformation(ASTScopeContext* scopeCtx)
     }
     m_blockInfosLength = blockScopes.size();
     m_blockInfos = (InterpretedCodeBlock::BlockInfo**)GC_MALLOC(sizeof(InterpretedCodeBlock::BlockInfo*) * m_blockInfosLength);
+    GC_manual_kind_dirty(this);
     for (size_t i = 0; i < m_blockInfosLength; i++) {
         // if block comes from switch statement, we should allocate variables on heap.
         // because our we can track only heap variables are initialized by user
@@ -203,6 +207,7 @@ InterpretedCodeBlock::InterpretedCodeBlock(Context* ctx, Script* script, ASTScop
     m_sourceStart = scopeCtx->m_functionStartLOC.index;
     m_sourceEnd = scopeCtx->m_bodyEndLOC.index;
     m_parent = parentBlock;
+    GC_manual_kind_dirty(this);
     m_functionName = scopeCtx->m_functionName;
     m_functionStartLine = scopeCtx->m_functionStartLOC.line;
     m_functionStartColumn = scopeCtx->m_functionStartLOC.column;
@@ -287,6 +292,7 @@ InterpretedCodeBlock::InterpretedCodeBlock(Context* ctx, Script* script)
     , m_scopeContext(nullptr)
 #endif
 {
+    GC_manual_kind_dirty(this);
 }
 
 void InterpretedCodeBlock::recordGlobalParsingInfo(ASTScopeContext* scopeCtx, bool isEvalCode, bool isEvalCodeInFunction)
@@ -319,6 +325,7 @@ void InterpretedCodeBlock::recordGlobalParsingInfo(ASTScopeContext* scopeCtx, bo
 
     const ASTScopeContextNameInfoVector& innerIdentifiers = scopeCtx->m_varNames;
     m_identifierInfos.resize(innerIdentifiers.size());
+    GC_manual_kind_dirty(this);
 
     for (size_t i = 0; i < innerIdentifiers.size(); i++) {
         IdentifierInfo info;
@@ -374,6 +381,7 @@ void InterpretedCodeBlock::recordFunctionParsingInfo(ASTScopeContext* scopeCtx, 
     if (parameterNames.size() > 0) {
         size_t parameterNamesCount = parameterNames.size();
         m_parameterNames.resizeWithUninitializedValues(parameterNamesCount);
+        GC_manual_kind_dirty(this);
         for (size_t i = 0; i < parameterNamesCount; i++) {
             m_parameterNames[i] = parameterNames[i];
         }
@@ -390,6 +398,7 @@ void InterpretedCodeBlock::recordFunctionParsingInfo(ASTScopeContext* scopeCtx, 
 
     const ASTScopeContextNameInfoVector& innerIdentifiers = scopeCtx->m_varNames;
     m_identifierInfos.resizeWithUninitializedValues(innerIdentifiers.size());
+    GC_manual_kind_dirty(this);
     for (size_t i = 0; i < innerIdentifiers.size(); i++) {
         IdentifierInfo info;
         info.m_needToAllocateOnStack = m_canUseIndexedVariableStorage;
@@ -429,6 +438,7 @@ void InterpretedCodeBlock::captureArguments(bool needToAllocateOnStack)
         info.m_indexForIndexedStorage = SIZE_MAX;
         info.m_name = arguments;
         m_identifierInfos.pushBack(info);
+        GC_manual_kind_dirty(this);
 
         auto idMap = identifierInfoMap();
         if (idMap) {
@@ -497,6 +507,7 @@ void InterpretedCodeBlock::markHeapAllocatedEnvironmentFromHere(LexicalBlockInde
             if (bi->isGenericBlockInfo()) {
                 if (c->m_blockInfosLength == 1) {
                     c->m_blockInfos = BlockInfo::genericBlockInfoArray(false, bi->shouldAllocateEnvironment());
+                    GC_manual_kind_dirty(c);
                     bi = c->blockInfos()[0];
                 } else {
                     bi = BlockInfo::genericBlockInfo(false, bi->shouldAllocateEnvironment());
@@ -574,6 +585,7 @@ void InterpretedCodeBlock::computeBlockVariables(LexicalBlockIndex currentBlockI
     if (bi->isGenericBlockInfo()) {
         if (m_blockInfosLength == 1) {
             m_blockInfos = BlockInfo::genericBlockInfoArray(bi->canAllocateEnvironmentOnStack(), isThereHeapVariable);
+            GC_manual_kind_dirty(this);
         } else {
             bi = BlockInfo::genericBlockInfo(bi->canAllocateEnvironmentOnStack(), isThereHeapVariable);
             blockInfos()[arrayIndex] = bi;
@@ -678,6 +690,7 @@ void InterpretedCodeBlock::computeVariables()
                 if (blockInfos()[i]->isGenericBlockInfo()) {
                     if (m_blockInfosLength == 1) {
                         m_blockInfos = BlockInfo::genericBlockInfoArray(false, blockInfos()[i]->identifiers().size());
+                        GC_manual_kind_dirty(this);
                     } else {
                         blockInfos()[i] = BlockInfo::genericBlockInfo(false, blockInfos()[i]->identifiers().size() || (m_hasEvalInParameter && isArrowFunctionExpression() && blockInfos()[i]->blockIndex() == 0));
                     }
@@ -720,6 +733,7 @@ void InterpretedCodeBlock::computeVariables()
         if (bi->isGenericBlockInfo()) {
             if (m_blockInfosLength == 1) {
                 m_blockInfos = BlockInfo::genericBlockInfoArray(bi->canAllocateEnvironmentOnStack(), false);
+                GC_manual_kind_dirty(this);
             } else {
                 blockInfos()[arrayIndex] = BlockInfo::genericBlockInfo(bi->canAllocateEnvironmentOnStack(), false);
             }
@@ -732,6 +746,7 @@ void InterpretedCodeBlock::computeVariables()
             for (size_t i = 0; i < m_identifierInfos.size(); i++) {
                 if (m_identifierInfos[i].m_name == arguments) {
                     m_identifierInfos.erase(i);
+                    GC_manual_kind_dirty(this);
                     break;
                 }
             }
@@ -765,6 +780,7 @@ void InterpretedCodeBlock::computeVariables()
                 if (blockInfos()[i]->isGenericBlockInfo()) {
                     if (m_blockInfosLength == 1) {
                         m_blockInfos = BlockInfo::genericBlockInfoArray(false, blockInfos()[i]->identifiers().size());
+                        GC_manual_kind_dirty(this);
                     } else {
                         blockInfos()[i] = BlockInfo::genericBlockInfo(false, blockInfos()[i]->identifiers().size() || (m_hasEvalInParameter && isArrowFunctionExpression() && blockInfos()[i]->blockIndex() == 0));
                     }
@@ -808,6 +824,7 @@ void InterpretedCodeBlock::computeVariables()
             if (bi->isGenericBlockInfo()) {
                 if (m_blockInfosLength == 1) {
                     m_blockInfos = BlockInfo::genericBlockInfoArray(bi->canAllocateEnvironmentOnStack(), false);
+                    GC_manual_kind_dirty(this);
                     bi = blockInfos()[0];
                 } else {
                     bi = BlockInfo::genericBlockInfo(bi->canAllocateEnvironmentOnStack(), false);

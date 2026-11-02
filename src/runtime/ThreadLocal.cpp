@@ -348,6 +348,13 @@ static void genericGCEventListener(GC_EventType evtType)
         listeners = list.reclaimStartListeners();
         break;
     case GC_EVENT_RECLAIM_END:
+        // Bytecode cache age advances once per completed full collection.
+        // BDWGC's sequence number includes minors, which would make cache
+        // age jump after a minor/full sequence. Advance here once for the
+        // thread, before dispatching to all VM instances sharing this heap.
+        if (list.isFullGCFlag() || !GC_is_incremental_mode()) {
+            ++ThreadLocal::gcEpoch();
+        }
         listeners = list.reclaimEndListeners();
         break;
     default:
@@ -607,11 +614,31 @@ void ThreadLocal::initializeTlsKeySlotOffsets()
 }
 #endif
 
+#if defined(OS_POSIX)
+struct SavedGCPolicy {
+    unsigned long timeLimit;
+    int fullFrequency;
+};
+static MAY_THREAD_LOCAL SavedGCPolicy g_savedGCPolicy;
+static MAY_THREAD_LOCAL bool g_hasSavedGCPolicy = false;
+
+static void restoreGcFlags()
+{
+    if (g_hasSavedGCPolicy) {
+        GC_set_time_limit(g_savedGCPolicy.timeLimit);
+        GC_set_full_freq(g_savedGCPolicy.fullFrequency);
+        g_hasSavedGCPolicy = false;
+    }
+}
+#endif
+
 static void initGcFlags(Globals::InitializeOption optionFromGlobal)
 {
 #if defined(OS_POSIX)
-    if (static_cast<uint32_t>(optionFromGlobal & Globals::InitializeOption::PreferIncrementalGC)) {
-        setenv("GC_ENABLE_INCREMENTAL", "1", 1);
+    if (static_cast<uint32_t>(optionFromGlobal & (Globals::InitializeOption::TrackDirtyPages | Globals::InitializeOption::PreferGenerationalGC))) {
+        // Preserve the configured policy across thread-local GC lifetimes.
+        g_savedGCPolicy = { GC_get_time_limit_for_init(), GC_get_full_freq_for_init() };
+        g_hasSavedGCPolicy = true;
     }
 #endif
 }
@@ -634,7 +661,15 @@ void ThreadLocal::initialize(uint32_t optionFromGlobal)
     }
 #endif
     // Heap is initialized for each thread
-    Heap::initialize();
+    bool preferIncremental = false;
+    bool trackDirtyPages = false;
+    bool preferGenerational = false;
+#if defined(OS_POSIX)
+    preferIncremental = optionFromGlobal & static_cast<uint32_t>(Globals::InitializeOption::PreferIncrementalGC);
+    trackDirtyPages = optionFromGlobal & static_cast<uint32_t>(Globals::InitializeOption::TrackDirtyPages);
+    preferGenerational = optionFromGlobal & static_cast<uint32_t>(Globals::InitializeOption::PreferGenerationalGC);
+#endif
+    Heap::initialize(preferIncremental, trackDirtyPages, preferGenerational);
 #if defined(ESCARGOT_USE_32BIT_IN_64BIT)
     g_cageBase = GC_get_cage_base();
     ESCARGOT_RELEASE_ASSERT(g_cageBase && !(g_cageBase & 0xffffffffULL));
@@ -770,7 +805,12 @@ void ThreadLocal::initialize(uint32_t optionFromGlobal)
 #endif
 
     // g_randEngine
-    g_randEngine = new std::mt19937(static_cast<unsigned int>(time(NULL)));
+    unsigned int randomSeed = static_cast<unsigned int>(time(NULL));
+    Optional<const char*> seedSetting(getenv("ESCARGOT_BENCH_SEED"));
+    if (seedSetting) {
+        randomSeed = static_cast<unsigned int>(strtoul(seedSetting.value(), nullptr, 10));
+    }
+    g_randEngine = new std::mt19937(randomSeed);
 
     // g_bfContext
     bf_context_init(&g_bfContext, [](void* opaque, void* ptr, size_t size) -> void* { return realloc(ptr, size); }, nullptr);
@@ -788,9 +828,9 @@ void ThreadLocal::initialize(uint32_t optionFromGlobal)
     GC_set_on_collection_event(genericGCEventListener);
     g_previousMarkStackEmptyListener = GC_get_on_mark_stack_empty();
     GC_set_on_mark_stack_empty(genericGCMarkStackEmptyListener);
-    if (GC_is_incremental_mode()) {
-        GC_set_start_callback(genericGCFullGCStartCallback);
-    }
+    // Incremental collection can start after ordinary full collections.
+    // Register full-mark notifications before either collection mode runs.
+    GC_set_start_callback(genericGCFullGCStartCallback);
 
     // g_astAllocator
     g_astAllocator = new ASTAllocator();
@@ -915,9 +955,7 @@ void ThreadLocal::finalize()
     GC_set_on_collection_event(nullptr);
     GC_set_on_mark_stack_empty(g_previousMarkStackEmptyListener);
     g_previousMarkStackEmptyListener = nullptr;
-    if (GC_is_incremental_mode()) {
-        GC_set_start_callback(nullptr);
-    }
+    GC_set_start_callback(nullptr);
 
     // g_astAllocator
     delete g_astAllocator;
@@ -929,6 +967,10 @@ void ThreadLocal::finalize()
 
     // g_gcEpoch
     g_gcEpoch = 0;
+
+#if defined(OS_POSIX)
+    restoreGcFlags();
+#endif
 
 #if defined(ESCARGOT_USE_32BIT_IN_64BIT)
 #if defined(ENABLE_TLS_ACCESS_BY_PTHREAD_KEY)

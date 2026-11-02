@@ -445,7 +445,7 @@ bool CodeCache::loadGlobalCache(Context* context, const CodeCacheIndex& cacheInd
 
         ASSERT(!!topCodeBlock && !!topByteCodeBlock);
         script->m_topCodeBlock = topCodeBlock;
-        topCodeBlock->m_byteCodeBlock = topByteCodeBlock;
+        topCodeBlock->setByteCodeBlock(topByteCodeBlock);
 
         ESCARGOT_LOG_INFO("[CodeCache] Load CodeCache Done (%s)\n", script->srcName()->toUTF8StringData().data());
 
@@ -467,7 +467,7 @@ bool CodeCache::loadFunctionCache(Context* context, const CodeCacheIndex& cacheI
         // load function CodeBlock and its related information
         prepareCacheLoading(context, cacheIndex, entry);
 
-        codeBlock->m_byteCodeBlock = loadByteCodeBlock(context, codeBlock);
+        codeBlock->setByteCodeBlock(loadByteCodeBlock(context, codeBlock));
 
         bool result = postCacheLoading();
         if (result) {
@@ -496,7 +496,7 @@ bool CodeCache::storeGlobalCache(Context* context, const CodeCacheIndex& cacheIn
 
     // After CodeBlockTree, ByteCode and StringTable are stored sequentially
     try {
-        topCodeBlock->m_byteCodeBlock = ByteCodeGenerator::generateByteCode(context, topCodeBlock, programNode, inWith, true);
+        topCodeBlock->setByteCodeBlock(ByteCodeGenerator::generateByteCode(context, topCodeBlock, programNode, inWith, true));
     } catch (const char* message) {
         // handle failure
         m_status = Status::FAILED;
@@ -526,7 +526,7 @@ bool CodeCache::storeFunctionCache(Context* context, const CodeCacheIndex& cache
     prepareCacheWriting(cacheIndex);
 
     try {
-        codeBlock->m_byteCodeBlock = ByteCodeGenerator::generateByteCode(context, codeBlock, functionNode, false, true);
+        codeBlock->setByteCodeBlock(ByteCodeGenerator::generateByteCode(context, codeBlock, functionNode, false, true));
     } catch (const char* message) {
         // handle failure
         m_status = Status::FAILED;
@@ -866,7 +866,7 @@ void CodeCache::loadAllByteCodeBlockOfFunctions(Context* context, std::vector<In
             m_currentContext.m_cacheStringTable = loadCacheStringTable(context);
 
             // load ByteCodeBlock
-            codeBlock->m_byteCodeBlock = loadByteCodeBlock(context, codeBlock);
+            codeBlock->setByteCodeBlock(loadByteCodeBlock(context, codeBlock));
 
             // finalize
             if (m_currentContext.m_cacheStringTable) {

@@ -691,6 +691,8 @@ void initializeCustomAllocators()
                                                                             TRUE);
 #endif
     }
+    GC_register_manual_kind(s_gcKinds[HeapObjectKind::InterpretedCodeBlockKind]);
+    GC_register_manual_kind(s_gcKinds[HeapObjectKind::InterpretedCodeBlockWithRareDataKind]);
 }
 
 void iterateSpecificKindOfObject(ExecutionState& state, HeapObjectKind kind, HeapObjectIteratorCallback callback)

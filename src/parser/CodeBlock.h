@@ -501,6 +501,7 @@ public:
         // set function name is allowed only for dynamically created function except class constructor
         ASSERT(m_hasDynamicSourceCode && !m_isClassConstructor);
         m_functionName = name;
+        GC_manual_kind_dirty(this);
     }
 
     virtual bool hasRareData() const
@@ -554,7 +555,7 @@ public:
         return m_byteCodeBlock.getWithBase(base);
     }
 
-    void setByteCodeBlock(ByteCodeBlock* block)
+    void setByteCodeBlock(Optional<ByteCodeBlock*> block)
     {
 #ifndef NDEBUG
         if (!!m_byteCodeBlock) {
@@ -562,6 +563,8 @@ public:
         }
 #endif
         m_byteCodeBlock = block;
+        if (block)
+            GC_manual_kind_dirty(this);
     }
 
     uint32_t pruningCount() const
@@ -609,15 +612,18 @@ public:
         return *m_children.value();
     }
 
-    void setParent(InterpretedCodeBlock* parentCodeBlock)
+    void setParent(Optional<InterpretedCodeBlock*> parentCodeBlock)
     {
         m_parent = parentCodeBlock;
+        if (parentCodeBlock)
+            GC_manual_kind_dirty(this);
     }
 
     void setChildren(InterpretedCodeBlockVector* codeBlockVector)
     {
         ASSERT(!m_children);
         m_children = codeBlockVector;
+        GC_manual_kind_dirty(this);
     }
 
     InterpretedCodeBlock* childBlockAt(size_t idx)
@@ -1287,6 +1293,7 @@ private:
         : InterpretedCodeBlock(ctx, script)
         , m_rareData(new InterpretedCodeBlockRareData())
     {
+        GC_manual_kind_dirty(this);
     }
 
     CompressibleHeapPointer<InterpretedCodeBlockRareData> m_rareData;

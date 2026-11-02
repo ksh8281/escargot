@@ -808,6 +808,7 @@ InterpretedCodeBlock* CodeCacheReader::loadInterpretedCodeBlock(Context* context
     size = m_buffer.get<size_t>();
     m_buffer.requireData(size, sizeof(size_t));
     atomicStringVector.resizeWithUninitializedValues(size);
+    GC_manual_kind_dirty(codeBlock);
     for (size_t i = 0; i < size; i++) {
         size_t stringIndex = m_buffer.get<size_t>();
         atomicStringVector[i] = m_stringTable->get(stringIndex);
@@ -818,6 +819,7 @@ InterpretedCodeBlock* CodeCacheReader::loadInterpretedCodeBlock(Context* context
     size = m_buffer.get<size_t>();
     m_buffer.requireData(size, 5 * sizeof(bool) + 2 * sizeof(size_t));
     identifierVector.resizeWithUninitializedValues(size);
+    GC_manual_kind_dirty(codeBlock);
     for (size_t i = 0; i < size; i++) {
         InterpretedCodeBlock::IdentifierInfo info;
         info.m_needToAllocateOnStack = m_buffer.get<bool>();
@@ -838,6 +840,7 @@ InterpretedCodeBlock* CodeCacheReader::loadInterpretedCodeBlock(Context* context
     m_buffer.requireData(size, 3 * sizeof(bool) + 2 * sizeof(uint16_t) + sizeof(size_t));
     Optional<InterpretedCodeBlock::BlockInfo**> blockInfoVector = size ? (InterpretedCodeBlock::BlockInfo**)GC_MALLOC(sizeof(InterpretedCodeBlock::BlockInfo*) * size) : nullptr;
     codeBlock->m_blockInfos = blockInfoVector;
+    GC_manual_kind_dirty(codeBlock);
     codeBlock->m_blockInfosLength = size;
     for (size_t i = 0; i < size; i++) {
         bool canAllocateEnvironmentOnStack = m_buffer.get<bool>();
@@ -878,6 +881,7 @@ InterpretedCodeBlock* CodeCacheReader::loadInterpretedCodeBlock(Context* context
 
     // InterpretedCodeBlock::m_functionName
     codeBlock->m_functionName = m_stringTable->get(m_buffer.get<size_t>());
+    GC_manual_kind_dirty(codeBlock);
 
     // InterpretedCodeBlock::m_functionStart
     ExtendedNodeLOC functionStart = m_buffer.get<ExtendedNodeLOC>();

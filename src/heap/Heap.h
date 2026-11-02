@@ -156,7 +156,8 @@ private:
 
 public:
 #endif
-    static void initialize();
+    static void initialize(bool preferIncremental = false, bool trackDirtyPages = false,
+                           bool preferGenerational = false);
     static void finalize();
     static void printGCHeapUsage();
 };

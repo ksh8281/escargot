@@ -406,9 +406,14 @@ RegExpObject::RegExpCacheEntry& RegExpCacheMap::getCacheEntryAndCompileIfNeeded(
 {
     RegExpObject::RegExpCacheKey key(source, option);
 
+    // An unchanged write can still fault under mprotect and dirty a GC page.
+    // Keep false-to-true updates for CLOCK pruning, but avoid redundant stores
+    // in both cache-hit paths.
     auto hit = m_mruCache.lookup(key);
     if (hit) {
-        hit.value()->m_used = true;
+        if (!hit.value()->m_used) {
+            hit.value()->m_used = true;
+        }
         return *hit.value();
     }
 
@@ -416,7 +421,9 @@ RegExpObject::RegExpCacheEntry& RegExpCacheMap::getCacheEntryAndCompileIfNeeded(
     auto it = RegExpCacheMapData::find(key);
     if (it != end()) {
         entry = it.value();
-        entry->m_used = true;
+        if (!entry->m_used) {
+            entry->m_used = true;
+        }
     } else {
         const char* yarrError = nullptr;
         JSC::Yarr::YarrPattern* yarrPattern = nullptr;
