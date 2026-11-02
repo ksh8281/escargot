@@ -64,3 +64,5 @@ for index in range(12):
     if not row['passed']:
         break
 print('CLOSURE COMPLETE', flush=True)
+if any(not case['passed'] for case in data['cases']):
+    raise SystemExit(1)

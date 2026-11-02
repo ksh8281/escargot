@@ -64,6 +64,7 @@ for index in range(24):
         row.update(passed=True, counts=counts, audit=result['mode_audit'])
     except Exception as error:
         row.update(passed=False, error=repr(error))
+        shutil.copy2(engine, report / 'failed-engine')
     data['cases'].append(row)
     (report / 'correctness.json').write_text(json.dumps(data, indent=2)+'\n')
     print('CORRECTNESS', json.dumps(row), flush=True)
@@ -71,3 +72,5 @@ for index in range(24):
         break
 shutil.copy2(bundle, report / 'memory.js')
 print('CORRECTNESS COMPLETE', flush=True)
+if any(not case['passed'] for case in data['cases']):
+    raise SystemExit(1)

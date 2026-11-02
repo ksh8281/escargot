@@ -13,6 +13,7 @@ import pty
 import re
 import selectors
 import shlex
+import shutil
 import signal
 import statistics
 import struct
@@ -371,6 +372,13 @@ def main():
         print('REBASED BASELINE COMPLETE', architecture, flush=True)
     except BaseException as error:
         data.update(status='failed', error=type(error).__name__ + ': ' + str(error))
+        for name, variable in [('original', 'baseline'), ('candidate', 'candidate')]:
+            binary = locals().get(variable)
+            if binary is not None and binary.is_file():
+                try:
+                    shutil.copy2(binary, report / ('failed-' + name + '-engine'))
+                except OSError as capture_error:
+                    data.setdefault('artifact_errors', {})[name] = str(capture_error)
         raise
     finally:
         write_json(report / 'measurements.json', data)
