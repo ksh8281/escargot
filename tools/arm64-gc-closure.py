@@ -56,7 +56,7 @@ for index in range(12):
     except Exception as error:
         contents = (report / (label+'.log')).read_text(errors='replace')
         row.update(passed=False, error=repr(error), evidence=[x for x in contents.splitlines()
-                   if x.startswith(('SHADOW_MISSING', 'SOURCE_WORD', 'TARGET_FIRST', 'Uncaught'))])
+                   if x.startswith(('SHADOW_PHASE', 'SHADOW_MISSING', 'SOURCE_WORD', 'TARGET_FIRST', 'Uncaught'))])
         shutil.copy2(engine, report / 'failed-engine')
     data['cases'].append(row)
     (report / 'closure.json').write_text(json.dumps(data, indent=2)+'\n')

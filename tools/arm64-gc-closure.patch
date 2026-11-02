@@ -27,7 +27,7 @@ diff --git a/mark.c b/mark.c
 index 12b6f059..93f50156 100644
 --- a/mark.c
 +++ b/mark.c
-@@ -29,6 +29,89 @@ GC_INNER MAY_THREAD_LOCAL word GC_target_reuse_stats[16];
+@@ -29,6 +29,93 @@ GC_INNER MAY_THREAD_LOCAL word GC_target_reuse_stats[16];
     table bytes, virtual bytes, hugepage-advice failures. */
  GC_INNER MAY_THREAD_LOCAL word GC_target_table_stats[8];
  GC_INNER MAY_THREAD_LOCAL word GC_source_page_stats[20];
@@ -68,7 +68,11 @@ index 12b6f059..93f50156 100644
 +    GC_verify_snapshot *ss = GC_verify_pages[((word)source_base & 0xffffffffU) >> LOG_HBLKSIZE];
 +    size_t sb = MARK_BIT_NO((word)source_base & (HBLKSIZE-1), sh->hb_sz);
 +    if (ss && (ss->free_marks[divWORDSZ(sb)] & ((word)1 << modWORDSZ(sb)))) return;
++    /* A fresh conservative root scan may discover extra objects. Their
++       children do not demonstrate a missing edge in the original trace. */
++    if (ss == NULL || !(ss->marks[divWORDSZ(sb)] & ((word)1 << modWORDSZ(sb)))) return;
 +    unsigned i;
++    GC_err_printf("SHADOW_PHASE young=%u source_originally_marked=1\n", (unsigned)GC_verify_was_young);
 +    GC_err_printf("SHADOW_MISSING gc=%lu source=%p source_base=%p source_kind=%u source_size=%lu dirty=%d target=%p target_kind=%u size=%lu\n",
 +      (unsigned long)GC_gc_no,(void *)source,source_base,sh->hb_obj_kind,(unsigned long)sh->hb_sz,
 +      GC_page_was_dirty(HBLKPTR(source)),(void *)target,hhdr->hb_obj_kind,(unsigned long)hhdr->hb_sz);
