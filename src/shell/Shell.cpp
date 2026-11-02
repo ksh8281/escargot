@@ -37,6 +37,7 @@
 #endif
 
 #include "api/EscargotPublic.h"
+#include "gc/gc.h"
 
 #if defined(__clang__)
 #if __has_feature(address_sanitizer)
@@ -1503,6 +1504,9 @@ static __attribute__((noinline)) int shellMain(int argc, char* argv[], void* tar
     context.release();
     instance.release();
 
+    fprintf(stderr, "PHONE_MODE_AUDIT {\"gc_no\":%lu,\"incremental\":%d,\"free_space_divisor\":%lu,\"heap_bytes\":%zu,\"free_bytes\":%zu}\n",
+        (unsigned long)GC_get_gc_no(), GC_is_incremental_mode(),
+        (unsigned long)GC_get_free_space_divisor(), GC_get_heap_size(), GC_get_free_bytes());
     Globals::finalize();
 
 #if defined(ESCARGOT_GOOGLE_PERF)
