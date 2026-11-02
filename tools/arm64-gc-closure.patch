@@ -1,0 +1,133 @@
+diff --git a/include/private/gc_pmark.h b/include/private/gc_pmark.h
+index aeb4fd70..dd89a2b1 100644
+--- a/include/private/gc_pmark.h
++++ b/include/private/gc_pmark.h
+@@ -395,6 +395,7 @@ GC_ms_push_contents_hdr(ptr_t current, hdr *hhdr, mse *mark_stack_top,
+                                      (unsigned long)GC_gc_no, (void *)base,
+                                      (void *)source));
+     INCR_MARKS(hhdr);
++    if (GC_verify_minor_active) GC_verify_minor_edge(source, base, hhdr);
+ #ifdef GC_TEST_ZERO_SOURCE_MUTATION
+     if (GC_test_zero_hidden_child == ~ADDR(base)
+         && GC_test_zero_hidden_field == ~ADDR(source))
+diff --git a/include/private/gc_priv.h b/include/private/gc_priv.h
+index ad8a9d77..d17849cd 100644
+--- a/include/private/gc_priv.h
++++ b/include/private/gc_priv.h
+@@ -4097,6 +4097,8 @@ GC_EXTERN MAY_THREAD_LOCAL word GC_young_retrace_rejections;
+ GC_EXTERN MAY_THREAD_LOCAL word GC_young_retained_bytes;
+ GC_EXTERN MAY_THREAD_LOCAL word GC_young_snapshot_bytes;
+ 
++GC_EXTERN MAY_THREAD_LOCAL GC_bool GC_verify_minor_active;
++GC_INNER void GC_verify_minor_edge(const void *source, const void *target, const hdr *hhdr);
+ GC_EXTERN MAY_THREAD_LOCAL unsigned GC_young_dirty_percent;
+ GC_EXTERN MAY_THREAD_LOCAL word GC_young_live_bytes;
+ GC_EXTERN MAY_THREAD_LOCAL word GC_young_live_limit;
+diff --git a/mark.c b/mark.c
+index 12b6f059..93f50156 100644
+--- a/mark.c
++++ b/mark.c
+@@ -29,6 +29,89 @@ GC_INNER MAY_THREAD_LOCAL word GC_target_reuse_stats[16];
+    table bytes, virtual bytes, hugepage-advice failures. */
+ GC_INNER MAY_THREAD_LOCAL word GC_target_table_stats[8];
+ GC_INNER MAY_THREAD_LOCAL word GC_source_page_stats[20];
++GC_INNER MAY_THREAD_LOCAL GC_bool GC_verify_minor_active;
++STATIC MAY_THREAD_LOCAL GC_bool GC_verify_was_young;
++STATIC MAY_THREAD_LOCAL word GC_verify_minor_last = GC_WORD_MAX;
++typedef struct {
++  hdr *header;
++  word marks[MARK_BITS_PER_HBLK / CPP_WORDSZ + 1];
++  size_t count;
++  word free_marks[MARK_BITS_PER_HBLK / CPP_WORDSZ + 1];
++} GC_verify_snapshot;
++STATIC MAY_THREAD_LOCAL GC_verify_snapshot **GC_verify_pages;
++STATIC MAY_THREAD_LOCAL GC_verify_snapshot *GC_verify_snapshots;
++STATIC MAY_THREAD_LOCAL size_t GC_verify_count;
++static void GC_CALLBACK GC_verify_count_block(struct hblk *h, void *unused) {
++  UNUSED_ARG(h); UNUSED_ARG(unused); ++GC_verify_count;
++}
++static void GC_CALLBACK GC_verify_save_block(struct hblk *h, void *unused) {
++  hdr *hhdr = HDR(h);
++  GC_verify_snapshot *snap = &GC_verify_snapshots[GC_verify_count++];
++  UNUSED_ARG(unused);
++  snap->header = hhdr; snap->count = hhdr->hb_n_marks;
++  BZERO(snap->free_marks, sizeof(snap->free_marks));
++  GC_STATIC_ASSERT(sizeof(snap->marks) >= sizeof(hhdr->hb_marks));
++  BCOPY(CAST_AWAY_VOLATILE_PVOID(hhdr->hb_marks), snap->marks, sizeof(hhdr->hb_marks));
++  GC_verify_pages[((word)h & 0xffffffffU) >> LOG_HBLKSIZE] = snap;
++}
++GC_INNER void GC_verify_minor_edge(const void *source, const void *target, const hdr *hhdr) {
++  size_t bit = MARK_BIT_NO((word)target & (HBLKSIZE-1), hhdr->hb_sz);
++  GC_verify_snapshot *snap = GC_verify_pages[((word)target & 0xffffffffU) >> LOG_HBLKSIZE];
++  ptr_t source_base;
++  if (snap == NULL || (snap->marks[divWORDSZ(bit)] & ((word)1 << modWORDSZ(bit)))) return;
++  if (snap->free_marks[divWORDSZ(bit)] & ((word)1 << modWORDSZ(bit))) return;
++  source_base = GC_base((void *)source);
++  if (source_base) {
++    hdr *sh = GC_find_header(source_base);
++    GC_verify_snapshot *ss = GC_verify_pages[((word)source_base & 0xffffffffU) >> LOG_HBLKSIZE];
++    size_t sb = MARK_BIT_NO((word)source_base & (HBLKSIZE-1), sh->hb_sz);
++    if (ss && (ss->free_marks[divWORDSZ(sb)] & ((word)1 << modWORDSZ(sb)))) return;
++    unsigned i;
++    GC_err_printf("SHADOW_MISSING gc=%lu source=%p source_base=%p source_kind=%u source_size=%lu dirty=%d target=%p target_kind=%u size=%lu\n",
++      (unsigned long)GC_gc_no,(void *)source,source_base,sh->hb_obj_kind,(unsigned long)sh->hb_sz,
++      GC_page_was_dirty(HBLKPTR(source)),(void *)target,hhdr->hb_obj_kind,(unsigned long)hhdr->hb_sz);
++    for(i=0;i<12 && i*sizeof(word)<sh->hb_sz;++i) GC_err_printf("SOURCE_WORD %u %lx\n",i,(unsigned long)((word *)source_base)[i]);
++    GC_err_printf("TARGET_FIRST %lx\n",(unsigned long)*(word *)target);
++    ABORT("minor root-closure verification failed");
++  }
++}
++STATIC void GC_verify_minor_begin(void) {
++  GC_verify_count=0;
++  GC_apply_to_all_blocks(GC_verify_count_block,NULL);
++  GC_verify_snapshots=malloc(GC_verify_count*sizeof(GC_verify_snapshot));
++  GC_verify_pages=calloc((size_t)1 << (32-LOG_HBLKSIZE),sizeof(GC_verify_snapshot *));
++  if(!GC_verify_snapshots || !GC_verify_pages) ABORT("shadow allocation failed");
++  GC_verify_count=0;
++  GC_apply_to_all_blocks(GC_verify_save_block,NULL);
++  {
++    unsigned k, lg;
++    for (k=0;k<GC_n_kinds;++k) for(lg=1;lg<=MAXOBJGRANULES;++lg) {
++      ptr_t q=GC_obj_kinds[k].ok_freelist[lg];
++      for(;q;q=obj_link(q)) {
++        GC_verify_snapshot *snap=GC_verify_pages[((word)q & 0xffffffffU) >> LOG_HBLKSIZE];
++        size_t bit=MARK_BIT_NO((word)q & (HBLKSIZE-1),snap->header->hb_sz);
++        snap->free_marks[divWORDSZ(bit)] |= (word)1 << modWORDSZ(bit);
++      }
++    }
++  }
++  GC_verify_minor_active=TRUE;
++  GC_verify_was_young=GC_young_mark_active;
++  GC_young_mark_active=FALSE;
++  GC_sparse_sources_deinit();
++  GC_clear_marks();
++}
++STATIC void GC_verify_minor_end(void) {
++  size_t i;
++  for(i=0;i<GC_verify_count;++i) {
++    GC_verify_snapshot *snap=&GC_verify_snapshots[i];
++    BCOPY(snap->marks,CAST_AWAY_VOLATILE_PVOID(snap->header->hb_marks),sizeof(snap->header->hb_marks));
++    snap->header->hb_n_marks=snap->count;
++  }
++  free(GC_verify_pages);free(GC_verify_snapshots);
++  GC_verify_pages=NULL;GC_verify_snapshots=NULL;
++  GC_verify_minor_active=FALSE;GC_young_mark_active=GC_verify_was_young;
++}
++
+ STATIC MAY_THREAD_LOCAL GC_bool GC_source_page_slice;
+ STATIC MAY_THREAD_LOCAL GC_bool GC_source_page_audit;
+ STATIC MAY_THREAD_LOCAL unsigned GC_source_batch_mode;
+@@ -1809,6 +1890,13 @@ GC_mark_some(ptr_t cold_gc_frame)
+       }
+       if (GC_young_mark_active && GC_young_source_recovery_pending)
+         break;
++      if (!GC_verify_minor_active && GC_verify_minor_last != GC_gc_no
++          && GETENV("GC_VERIFY_MINOR") != NULL) {
++        GC_verify_minor_last = GC_gc_no;
++        GC_verify_minor_begin();
++        break;
++      }
++      if (GC_verify_minor_active) GC_verify_minor_end();
+       if (GC_mark_stack_too_small) {
+         alloc_mark_stack(2 * GC_mark_stack_size);
+       }
