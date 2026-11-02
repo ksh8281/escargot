@@ -1,0 +1,68 @@
+diff --git a/alloc.c b/alloc.c
+index a2e89c53..c7ec8f51 100644
+--- a/alloc.c
++++ b/alloc.c
+@@ -785,6 +785,8 @@ STATIC void GC_finish_collection(void);
+    allocation has progressed.  Keep the full's live-size anchor fixed while
+    suspended so gradual workload changes can eventually rearm the policy. */
+ STATIC MAY_THREAD_LOCAL GC_bool GC_admission_closed;
++STATIC MAY_THREAD_LOCAL unsigned GC_admission_abort_streak;
++STATIC MAY_THREAD_LOCAL int GC_bench_abort_backoff = -1;
+ STATIC MAY_THREAD_LOCAL GC_bool GC_admission_sample;
+ STATIC MAY_THREAD_LOCAL GC_bool GC_admission_pending;
+ STATIC MAY_THREAD_LOCAL GC_bool GC_admission_ignore_full;
+@@ -833,6 +835,7 @@ STATIC MAY_THREAD_LOCAL double GC_admission_previous_full_cost_ms;
+ STATIC void
+ GC_admission_reset_cost(void)
+ {
++  GC_admission_abort_streak = 0;
+   GC_admission_cost_pending = FALSE;
+   GC_admission_cost_poor_streak = 0;
+   GC_admission_probe_fulls = 0;
+@@ -933,6 +936,7 @@ GC_admission_deinit(void)
+ {
+   GC_young_growth_debt = 0;
+   GC_young_growth_cap_kib = -1;
++  GC_bench_abort_backoff = -1;
+   GC_admission_reset_cost();
+   GC_admission_closed = GC_admission_sample = GC_admission_pending = FALSE;
+   GC_admission_ignore_full = FALSE;
+@@ -1012,12 +1016,14 @@ GC_admission_finish(GC_bool is_full)
+        With a timer, the completed full prices all preceding minor work. */
+     if (!GC_admission_closed
+         && (GC_admission_cost_pending
++            || (GC_bench_abort_backoff == 1 && GC_admission_abort_streak >= 2)
+ #ifdef NO_CLOCK
+             || (GC_admission_pending
+                 && GC_admission_mark_total - GC_admission_origin
+                        <= GC_admission_pending_input)
+ #endif
+             )) {
++      GC_admission_abort_streak = 0;
+       GC_admission_closed = TRUE;
+       GC_admission_anchor = live;
+       ++GC_admission_closings;
+@@ -1220,6 +1226,14 @@ GC_maybe_gc(void)
+   GC_young_mark_active = FALSE;
+   if (GC_young_mark_aborted) {
+     ++GC_young_mark_aborts;
++    if (GC_admission_sample) {
++      if (GC_bench_abort_backoff < 0) {
++        const char *setting = GETENV("GC_BENCH_ABORT_BACKOFF");
++        GC_bench_abort_backoff = setting != NULL && atoi(setting) == 1;
++      }
++      if (GC_admission_abort_streak < 2)
++        ++GC_admission_abort_streak;
++    }
+     GC_admission_sample = GC_admission_pending = FALSE;
+     /* An abandoned partial queue says nothing about the capacity needed
+        by a fresh full trace.  Full overflow can request growth again. */
+@@ -1231,6 +1245,8 @@ GC_maybe_gc(void)
+     GC_ASSERT(marked);
+   }
+   if (marked) {
++    if (GC_generational && !GC_is_full_gc)
++      GC_admission_abort_streak = 0;
+     SAVE_CALLERS_TO_LAST_STACK();
+     GC_finish_collection();
+   } else if (!GC_is_full_gc) {
