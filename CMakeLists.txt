@@ -86,6 +86,13 @@ ENDIF()
 
 
 
+# Apply ARM state to all locally compiled C/C++ and assembly in this variant.
+IF (ESCARGOT_ARCH STREQUAL "arm" AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    SET (CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -marm")
+    SET (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -marm")
+    SET (CMAKE_ASM_FLAGS "${CMAKE_ASM_FLAGS} -marm")
+ENDIF()
+
 IF (CMAKE_SYSTEM_NAME STREQUAL "Generic" OR
     CMAKE_SYSTEM_NAME STREQUAL "BareMetal" OR
     CMAKE_SYSTEM_NAME STREQUAL "FreeRTOS" OR
