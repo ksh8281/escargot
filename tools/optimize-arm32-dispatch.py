@@ -220,7 +220,7 @@ def assemble_command(command, source, assembly, destination):
     return result + ["-o", str(destination), "-fno-lto"]
 
 
-def remove_dispatch_ors(command, source, destination, objdump, objcopy):
+def remove_dispatch_ors(command, source, destination, objdump, objcopy, keep=False):
     with tempfile.TemporaryDirectory(dir=destination.parent, prefix=".arm32-dispatch-") as directory:
         directory = Path(directory)
         assembly, original, modified = (directory / name for name in ("original.s", "original.o", "modified.o"))
@@ -232,6 +232,11 @@ def remove_dispatch_ors(command, source, destination, objdump, objcopy):
         subprocess.check_call(assemble_command(command, source, assembly, original))
         before = original.read_bytes()
         patches = dispatch_sites(original, before, objdump)
+        if keep:
+            # Keep the exact same tagged, no-GCSE compiler output for the control.
+            subprocess.check_call([objcopy, "--remove-section=" + MARKER, str(original)])
+            os.replace(str(original), str(destination))
+            return len(patches)
         sections, symbols = read_elf(before)
         function = next(s for s in symbols if s[0].startswith(INTERPRET) and s[3] & 15 == 2)
         assembly.write_text(rewrite_assembly(assembly.read_text(), function[0], len(patches)))
@@ -265,7 +270,7 @@ def main():
     parser.add_argument("--source", required=True)
     parser.add_argument("--objdump", required=True)
     parser.add_argument("--objcopy", required=True)
-    parser.add_argument("--mode", choices=("branch", "nop"), default="branch")
+    parser.add_argument("--mode", choices=("branch", "nop", "keep"), default="branch")
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args()
     command = args.command[1:] if args.command[:1] == ["--"] else args.command
@@ -276,14 +281,17 @@ def main():
         os.execvp(command[0], command)
     require("-c" in command and "-o" in command, "expected a GCC object compilation")
     destination = Path(command[command.index("-o") + 1])
-    if args.mode == "branch":
+    if args.mode in ("branch", "keep"):
         try:
-            count = remove_dispatch_ors(command, source, destination, args.objdump, args.objcopy)
+            count = remove_dispatch_ors(command, source, destination, args.objdump, args.objcopy, keep=args.mode == "keep")
         except Exception:
             if destination.exists():
                 destination.unlink()
             raise
-        print("ARM32 dispatch: removed %d ORs; preserved layout with unreachable space after BX" % count)
+        if args.mode == "keep":
+            print("ARM32 dispatch: kept %d ORs; identical tagging and no-gcse options" % count)
+        else:
+            print("ARM32 dispatch: removed %d ORs; preserved layout with unreachable space after BX" % count)
         return 0
     # LTO would regenerate the machine code after this verification/patching.
     # Other translation units can still use LTO normally.
