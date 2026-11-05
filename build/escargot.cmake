@@ -364,6 +364,39 @@ TARGET_INCLUDE_DIRECTORIES (${ESCARGOT_TARGET} PUBLIC ${ESCARGOT_ROOT}/src/api)
 TARGET_COMPILE_DEFINITIONS (${ESCARGOT_TARGET} PRIVATE ${ESCARGOT_DEFINITIONS} ${ESCARGOT_CONFIG_DEFINITIONS})
 TARGET_COMPILE_OPTIONS (${ESCARGOT_TARGET} PRIVATE ${ESCARGOT_CONFIG_CXXFLAGS} ${ESCARGOT_CXXFLAGS} ${CXXFLAGS_FROM_ENV})
 
+# Enable the candidate only on ARM32 in this comparison snapshot.
+SET (_thumb_dispatch_default OFF)
+IF (ESCARGOT_ARCH STREQUAL "arm")
+    SET (_thumb_dispatch_default ON)
+ENDIF()
+option(ESCARGOT_ARM32_THUMB_DISPATCH "Remove redundant GCC Thumb-2 dispatch state-bit operations" ${_thumb_dispatch_default})
+IF (ESCARGOT_ARM32_THUMB_DISPATCH)
+    SET (ESCARGOT_ARM32_THUMB_DISPATCH_MODE "BRANCH" CACHE STRING "Thumb dispatch optimization: BRANCH or the NOP fallback")
+    SET_PROPERTY (CACHE ESCARGOT_ARM32_THUMB_DISPATCH_MODE PROPERTY STRINGS BRANCH NOP)
+    IF (NOT ESCARGOT_ARM32_THUMB_DISPATCH_MODE MATCHES "^(BRANCH|NOP)$")
+        MESSAGE(FATAL_ERROR "ESCARGOT_ARM32_THUMB_DISPATCH_MODE must be BRANCH or NOP")
+    ENDIF()
+    STRING (TOLOWER "${ESCARGOT_ARM32_THUMB_DISPATCH_MODE}" _thumb_dispatch_mode)
+    IF (NOT CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR NOT ESCARGOT_ARCH STREQUAL "arm")
+        MESSAGE(FATAL_ERROR "ESCARGOT_ARM32_THUMB_DISPATCH requires GCC targeting ARM32 Thumb-2")
+    ENDIF()
+    IF (CMAKE_VERSION VERSION_LESS 3.4 OR NOT CMAKE_OBJDUMP OR NOT CMAKE_OBJCOPY)
+        MESSAGE(FATAL_ERROR "ESCARGOT_ARM32_THUMB_DISPATCH requires CMake 3.4+, objdump and objcopy")
+    ENDIF()
+    SET (_thumb_dispatch_source "${ESCARGOT_ROOT}/src/interpreter/ByteCodeInterpreter.cpp")
+    SET (_thumb_dispatch_launcher "${ESCARGOT_ROOT}/tools/optimize-arm32-dispatch.py")
+    GET_TARGET_PROPERTY (_thumb_dispatch_existing_launcher ${ESCARGOT_TARGET} CXX_COMPILER_LAUNCHER)
+    IF (NOT _thumb_dispatch_existing_launcher)
+        SET (_thumb_dispatch_existing_launcher "")
+    ENDIF()
+    SET_PROPERTY (TARGET ${ESCARGOT_TARGET} PROPERTY CXX_COMPILER_LAUNCHER
+        ${PYTHON_EXECUTABLE} ${_thumb_dispatch_launcher}
+        --source ${_thumb_dispatch_source} --objdump ${CMAKE_OBJDUMP} --objcopy ${CMAKE_OBJCOPY}
+        --mode ${_thumb_dispatch_mode}
+        -- ${_thumb_dispatch_existing_launcher})
+    SET_PROPERTY (SOURCE ${_thumb_dispatch_source} APPEND PROPERTY OBJECT_DEPENDS ${_thumb_dispatch_launcher})
+ENDIF()
+
 IF (ESCARGOT_BUILD_64BIT AND NOT ESCARGOT_BUILD_64BIT_LARGE AND
     NOT ESCARGOT_BUILD_64BIT_FORCE_LARGE AND ESCARGOT_HAS_CAGE_REGISTER_FLAG)
     SET_SOURCE_FILES_PROPERTIES (${ESCARGOT_ROOT}/src/interpreter/ByteCodeInterpreter.cpp
