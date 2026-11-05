@@ -723,14 +723,7 @@ private:
     ByteCode* m_code;
 };
 
-#if defined(ESCARGOT_ARM32_THUMB_DISPATCH_BRANCH)
-// GCC's GCSE pass can hurt computed-goto dispatch. Specify both options in
-// one attribute so the existing no-jump-tables setting is retained.
-__attribute__((optimize("no-jump-tables", "no-gcse")))
-#else
-ATTRIBUTE_NO_JUMP_TABLES
-#endif
-Value Interpreter::interpret(ExecutionState* state, ByteCodeBlock* byteCodeBlock, size_t entryProgramCounter, Value* registerFile)
+ATTRIBUTE_NO_JUMP_TABLES Value Interpreter::interpret(ExecutionState* state, ByteCodeBlock* byteCodeBlock, size_t entryProgramCounter, Value* registerFile)
 {
 #if defined(ESCARGOT_INTERPRETER_CAGE_REGISTER)
     CageBaseRegisterScope cageBaseRegisterScope;

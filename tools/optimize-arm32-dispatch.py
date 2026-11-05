@@ -227,8 +227,7 @@ def remove_dispatch_ors(command, source, destination, objdump, objcopy):
         compile_command = list(command)
         compile_command[compile_command.index("-c")] = "-S"
         compile_command[compile_command.index("-o") + 1] = str(assembly)
-        subprocess.check_call(compile_command + ["-DESCARGOT_ARM32_THUMB_DISPATCH=1",
-                                                "-DESCARGOT_ARM32_THUMB_DISPATCH_BRANCH=1", "-fno-lto"])
+        subprocess.check_call(compile_command + ["-DESCARGOT_ARM32_THUMB_DISPATCH=1", "-fno-lto"])
         subprocess.check_call(assemble_command(command, source, assembly, original))
         before = original.read_bytes()
         patches = dispatch_sites(original, before, objdump)
