@@ -6,8 +6,9 @@
 
 Only ByteCodeInterpreter.cpp is changed. It must opt in with an ELF marker and
 pretag every computed-goto target. Remove the redundant state-bit OR and leave
-its space after the unconditional BX, where it is never executed. Assemble the
-modified source normally so instruction relocations and debug info stay valid.
+its space after an unconditional MOV PC, where it is never executed.
+MOV PC keeps the interpreter in Thumb state without an interworking branch.
+Assemble the modified source normally so relocations and debug info stay valid.
 Leave dispatches across PC-relative instructions intact rather than move them.
 This translation unit is compiled without LTO so the linker cannot regenerate
 its dispatch. Other translation units keep their original compiler options.
@@ -202,6 +203,8 @@ def rewrite_assembly(source, name, count):
     require(len(pairs) == count, "assembler/object dispatch counts differ")
     for at, branch in pairs.items():
         lines[at] = "\t@ Thumb state bit is already set in the opcode table.\n"
+        target = lines[branch].split("@")[0].split()[1]
+        lines[branch] = "\tmov pc, %s\n" % target
         lines[branch] += "\t.space 4, 0 @ Unreachable space preserves subsequent code addresses.\n"
     return "".join(lines)
 
@@ -250,7 +253,9 @@ def remove_dispatch_ors(command, source, destination, objdump, objcopy):
         new_code = bytearray(after[new_section["offset"]:new_section["offset"] + new_section["size"]])
         for at, branch in patches.items():
             at, branch = at - section["offset"], branch - section["offset"]
-            require(new_code[branch - 4:branch - 2] == old_code[branch:branch + 2]
+            target = (struct.unpack_from("<H", old_code, branch)[0] >> 3) & 15
+            expected_branch = struct.pack("<H", 0x4687 | (target << 3))
+            require(new_code[branch - 4:branch - 2] == expected_branch
                     and new_code[branch - 2:branch + 2] == bytes(4),
                     "dispatch branch or unreachable padding differs from expected output")
             require(new_code[at:branch - 4] == old_code[at + 4:branch],
@@ -285,7 +290,7 @@ def main():
         if destination.exists():
             destination.unlink()
         raise
-    print("ARM32 dispatch: removed %d ORs; preserved layout with unreachable space after BX" % count)
+    print("ARM32 dispatch: removed %d ORs; preserved layout with unreachable space after MOV PC" % count)
     return 0
 
 
