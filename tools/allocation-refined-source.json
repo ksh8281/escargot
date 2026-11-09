@@ -1,0 +1,42 @@
+{
+  "runtime_revision": "e2e7af8ee3bbc29b17e994883b420d3961ddc064",
+  "gc_revision": "c3545c931054adf6a2e6e1a1790fb4d1c1269acd",
+  "cold_expected": {
+    "deqp-split-shift": 653482538,
+    "deqp-vector-chain": 13379414,
+    "deqp-rgba-read": 20400000,
+    "deqp-float-buffer-cycle": 2936832,
+    "octane-raytrace-like": 29218.755035478098,
+    "wtb-acorn-node-shape": 2197008
+  },
+  "cold_expected_provenance": "Full-mode independent scalar reference and work checksum agree at scale0.2 in local smoke; rechecked across all four modes with no reference or probe before timing.",
+  "files": {
+    "src/heap/Heap.cpp": "ed38359993327d6a45eb5eb0bbd4cef0ce9c070a86198836d2706c025710e52a",
+    "src/interpreter/ByteCode.h": "f6fff9f89245d3f2b568c963aa8b835bdeac30c0d66420e4edb59696d4cd876c",
+    "src/interpreter/ByteCodeGenerator.cpp": "de00130a15e50ff045b9d105740d74d6dbadb6a1052206936a156d63e49387b3",
+    "src/interpreter/ByteCodeGenerator.h": "e5ce88705439c2e5edcbaa20be68b7f543cbd5a46410926ceab3d5287becd832",
+    "src/interpreter/ByteCodeInterpreter.cpp": "aabea194759dc4f369263162158e3b4e69fb2674dfdb900fa16fb7e5988074f4",
+    "src/parser/ast/ArrayExpressionNode.h": "1f87e9898f440737bcafebfe93ad22ee99b0ad4241dcc94489b743d0babbfc04",
+    "src/parser/ast/NewExpressionNode.h": "e5dbb534ff36157dc3dce9be08264718a8fae2c329e7e9ae2c31ff21f7f4558b",
+    "src/parser/ast/ObjectExpressionNode.h": "dbda329f9d19f3a5071e024c1ab8ca0e440c0810d23fad644cac661d96a8991f",
+    "src/parser/ast/TryStatementNode.h": "9e9c1e4934bbb041abafdbf2312f029c15b7dbe101a22ae225e55ec1e729e84b",
+    "src/parser/ast/VariableDeclarationNode.h": "5d72fa4689b7d0a26fd129ceb3dd90d93c779cb81b7a3b90d3683b7f9ab552a4",
+    "src/runtime/ThreadLocal.cpp": "8fafccb0b413499a6521cc3d73ca9cb643e1613a32e121d9167b721433af92a1",
+    "src/runtime/VMInstance.cpp": "b4877c8d16d79ad279571fe7df11d16a0cb4eb0643bc710a3ca85423264873b1",
+    "src/shell/Shell.cpp": "5da93b22495fa088b676d2b38041c219bf6220e67d4b02d13f8ae8e781ce337b",
+    "third_party/GCutil/allchblk.c": "c8d90e767a7ec902cb366257b6aa1e4368d86aaf7fdb562eb4604882829b51bf",
+    "third_party/GCutil/alloc.c": "9909a8ae42457906f1d594663eaf19262c5c18090f6ed1a46b2e9cb4e53b0645",
+    "third_party/GCutil/include/gc/gc.h": "4ed3c48267348da62314a82e1d7f88d2044b37bec578e32f1b3e7c6887453598",
+    "third_party/GCutil/include/private/gc_priv.h": "aa69021862c01002186f5e73c60dd9e8c71610611088bbc21f9547bf39f6834f",
+    "third_party/GCutil/malloc.c": "3b21cd3f7cf578ad3f040a470283ab45fb69ae2da613dea6ef3c8687c82bd0ed",
+    "third_party/GCutil/mark.c": "f28057b38dd3f043fec58099a9063b1b03fe4f3018ac22eb2f89ccd1ff31eaa7",
+    "third_party/GCutil/misc.c": "e273a0f3908558ac6efb983e13bf2b92ebdd011cc48a1bf98e3db2b483cf0079",
+    "third_party/GCutil/numeric-ro.inc": "0029e0255ccf6c5a1f0e10be39ed448c28d85c50655f3d3f73bae9c35d001bf5",
+    "tools/arm-allocation-patterns-compare.py": "589d9eb6825fbacfd5619f295509a4113e7104e5af9dc37ac71d4425af77e97c",
+    "tools/arm-allocation-policy-compare.py": "3066664d8b957598dc1d711e3115e24c680e182478b807acece004a3022c22cb",
+    "tools/arm-allocation-refined-compare.py": "a87c6953090678c7265e12301eaae23d080f44c9c052e1648893ce43c2b984e5",
+    "tools/arm-cold-epoch-compare.py": "29c60aeb4b58c2f738b7b15fea6488995ae6797e7d3231bcad2164ca13845208",
+    "tools/arm-cold-epoch-settings.json": "63ed18b8083fc6c2fb4d37ebd997fe2fdd3f53ec72ebc5f03c96b9903a25f965",
+    "tools/deqp-allocation-patterns.js": "f508004614bdd4a0d77a586ce8e03e09eb29a25579add9f78ab0ae950da2d870"
+  }
+}
