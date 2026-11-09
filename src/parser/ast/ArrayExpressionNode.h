@@ -58,6 +58,10 @@ public:
             return;
         }
 
+        if (GC_allocation_pattern_mode() == 2 && !m_hasSpreadElement
+            && !m_isTaggedTemplateExpression && m_elements.size() <= 4) {
+            codeBlock->pushCode(AllocationPatternHint(ByteCodeLOC(m_loc.index), 0), context, m_loc.index);
+        }
         size_t arrayIndex = codeBlock->currentCodeSize();
         size_t arrLen = 0;
         codeBlock->pushCode(CreateArray(ByteCodeLOC(m_loc.index), dstRegister), context, this->m_loc.index);

@@ -152,7 +152,23 @@ void Heap::initialize(bool preferIncremental, bool trackDirtyPages, bool preferG
         // Start with ordinary full collections while the heap is small. Once
         // tracking activates after a full mark, reuse BDWGC's sticky marks and
         // dirty-page rescue, completing each collection with the world stopped.
-        GC_enable_generational(4 * 1024 * 1024);
+        unsigned patternMode = 0;
+        Optional<const char*> policy = getenv("ESCARGOT_BENCH_ALLOCATION_POLICY");
+        if (policy) {
+            if (strcmp(policy.value(), "always") == 0) {
+                patternMode = 1;
+            } else if (strcmp(policy.value(), "pattern") == 0) {
+                patternMode = 2;
+            }
+        }
+#if defined(ENABLE_CODE_CACHE)
+        // This prototype emits mode-dependent bytecode; persisted code caches
+        // do not yet include the experimental policy in their cache key.
+        RELEASE_ASSERT(patternMode != 2);
+#endif
+        size_t threshold = patternMode == 2 ? SIZE_MAX : patternMode == 1 ? 1 : 4 * 1024 * 1024;
+        GC_enable_generational(threshold);
+        GC_configure_allocation_pattern(patternMode);
     } else if (preferIncremental) {
         GC_enable_incremental();
     }

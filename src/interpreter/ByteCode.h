@@ -117,6 +117,7 @@ struct GlobalVariableAccessCacheItem;
     F(BinaryInOperation)                                                            \
     F(BinaryInstanceOfOperation)                                                    \
     F(BinaryInstanceOfOperationInlineCache)                                         \
+    F(AllocationPatternHint)                                                        \
     F(CreateObjectPrepare)                                                          \
     F(CreateObject)                                                                 \
     F(CreateOnlyKeyValueObject)                                                     \
@@ -1112,6 +1113,20 @@ public:
 
 COMPILE_ASSERT(sizeof(BreakpointDisabled) == sizeof(BreakpointEnabled), "");
 #endif /* ESCARGOT_DEBUGGER */
+
+// Advisory only: not an escape-analysis result and never an explicit GC.
+class AllocationPatternHint : public ByteCode {
+public:
+    AllocationPatternHint(const ByteCodeLOC& loc, unsigned kind)
+        : ByteCode(Opcode::AllocationPatternHintOpcode, loc)
+        , m_kind(kind)
+    {
+    }
+    unsigned m_kind;
+#ifndef NDEBUG
+    void dump() { printf("allocationpatternhint %u", m_kind); }
+#endif
+};
 
 class CreateObjectPrepare : public ByteCode {
 public:

@@ -56,6 +56,23 @@ public:
     virtual ASTNodeType type() override { return ASTNodeType::ObjectExpression; }
     virtual void generateExpressionByteCode(ByteCodeBlock* codeBlock, ByteCodeGenerateContext* context, ByteCodeRegisterIndex dstRegister) override
     {
+        if (GC_allocation_pattern_mode() == 2 && m_properties.size() <= 4) {
+            bool simple = true;
+            for (SentinelNode* property = m_properties.begin(); property != m_properties.end(); property = property->next()) {
+                if (!property->astNode()->isProperty()) {
+                    simple = false;
+                    break;
+                }
+                PropertyNode* p = property->astNode()->asProperty();
+                if (p->kind() != PropertyNode::Kind::Init || p->computed()) {
+                    simple = false;
+                    break;
+                }
+            }
+            if (simple) {
+                codeBlock->pushCode(AllocationPatternHint(ByteCodeLOC(m_loc.index), 1), context, m_loc.index);
+            }
+        }
         // Fast path: object literal with only simple key-value pairs
         // (identifier keys, no getters/setters, no spread, no __proto__, <= CreateOnlyKeyValueObject::kMaxKeyCount properties)
         if (m_properties.size() > 0 && m_properties.size() <= CreateOnlyKeyValueObject::kMaxKeyCount) {
