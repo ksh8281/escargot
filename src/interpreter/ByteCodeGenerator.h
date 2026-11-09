@@ -75,6 +75,7 @@ struct ByteCodeGenerateContext {
     ByteCodeGenerateContext(const ByteCodeGenerateContext& contextBefore)
         : m_baseRegisterCount(contextBefore.m_baseRegisterCount)
         , m_codeBlock(contextBefore.m_codeBlock)
+        , m_refinedAllocationSites(contextBefore.m_refinedAllocationSites)
         , m_byteCodeBlock(contextBefore.m_byteCodeBlock)
         , m_locData(contextBefore.m_locData)
         , m_isGlobalScope(contextBefore.m_isGlobalScope)
@@ -370,6 +371,8 @@ struct ByteCodeGenerateContext {
     size_t m_baseRegisterCount;
 
     InterpretedCodeBlock* m_codeBlock;
+    // Non-owning, non-null AST nodes; valid only while this AST is compiled.
+    std::unordered_set<Node*> m_refinedAllocationSites;
     ByteCodeBlock* m_byteCodeBlock;
     std::vector<std::pair<size_t, size_t>, std::allocator<std::pair<size_t, size_t>>>* m_locData; // used only for calculating location info
 

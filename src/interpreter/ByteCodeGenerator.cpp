@@ -255,6 +255,196 @@ const uint8_t byteCodeLengths[] = {
 #undef ITER_BYTE_CODE
 };
 
+// This is a local syntactic filter, not a reachability or type proof. A return
+// alone is not evidence of long lifetime. Explicit heap/container stores and
+// constructor arguments are stronger evidence of graph construction.
+static bool allocationScalarHint(Optional<Node*> value, bool allowReferences)
+{
+    if (!value) {
+        return false;
+    }
+    Node* node = value.value();
+    switch (node->type()) {
+    case ASTNodeType::Literal:
+        return static_cast<LiteralNode*>(node)->value().isNumber();
+    case ASTNodeType::Identifier:
+    case ASTNodeType::MemberExpression:
+        return allowReferences;
+    case ASTNodeType::BinaryExpressionPlus:
+    case ASTNodeType::BinaryExpressionMinus:
+    case ASTNodeType::BinaryExpressionMultiply:
+    case ASTNodeType::BinaryExpressionDivision:
+    case ASTNodeType::BinaryExpressionMod:
+    case ASTNodeType::BinaryExpressionExponentiation:
+    case ASTNodeType::BinaryExpressionBitwiseAnd:
+    case ASTNodeType::BinaryExpressionBitwiseOr:
+    case ASTNodeType::BinaryExpressionBitwiseXor:
+    case ASTNodeType::BinaryExpressionLeftShift:
+    case ASTNodeType::BinaryExpressionSignedRightShift:
+    case ASTNodeType::BinaryExpressionUnsignedRightShift:
+    case ASTNodeType::UnaryExpressionPlus:
+    case ASTNodeType::UnaryExpressionMinus:
+    case ASTNodeType::UnaryExpressionBitwiseNot:
+        return true;
+    case ASTNodeType::CallExpression: {
+        auto* call = static_cast<CallExpressionNode*>(node);
+        if (!call->callee()->isMemberExpression()) {
+            return false;
+        }
+        auto* member = call->callee()->asMemberExpression();
+        if (!member->isPreComputedCase() || !member->object()->isIdentifier()
+            || !member->object()->asIdentifier()->name().string()->equals("Math")) {
+            return false;
+        }
+        auto method = std::string(member->propertyName().string()->toNonGCUTF8StringData().c_str());
+        return method == "floor" || method == "ceil" || method == "round"
+            || method == "trunc" || method == "min" || method == "max"
+            || method == "abs" || method == "fround";
+    }
+    default:
+        return false;
+    }
+}
+
+static void findRefinedAllocationSites(Node* ast, ByteCodeGenerateContext& context)
+{
+    if (context.m_codeBlock->hasEval() || context.m_isWithScope) {
+        return;
+    }
+    Node* scope = ast->type() == ASTNodeType::Function ? static_cast<FunctionNode*>(ast)->body() : ast;
+    std::vector<Node*> nodes;
+    scope->iterateChildren([&](Node* node) { nodes.push_back(node); });
+    std::unordered_map<std::string, std::vector<Node*>> bindings;
+    std::vector<std::pair<std::string, std::string>> aliases;
+    std::unordered_set<std::string> escaping, numericFilled, otherFilled;
+    std::unordered_set<Node*> blocked;
+    auto name = [](Node* node) { return std::string(node->asIdentifier()->name().string()->toNonGCUTF8StringData().c_str()); };
+    auto stored = [&](Node* node) {
+        if (node->isIdentifier()) {
+            escaping.insert(name(node));
+        } else {
+            blocked.insert(node);
+        }
+    };
+    auto bind = [&](Node* id, Optional<Node*> value) {
+        if (!id->isIdentifier() || !value) {
+            return;
+        }
+        bindings[name(id)].push_back(value.value());
+        if (value.value()->isIdentifier()) {
+            aliases.emplace_back(name(id), name(value.value()));
+        }
+    };
+    for (Node* node : nodes) {
+        if (node->type() == ASTNodeType::VariableDeclaration) {
+            const auto& declarations = node->asVariableDeclaration()->declarations();
+            for (auto* item = declarations.begin(); item != declarations.end(); item = item->next()) {
+                auto* declaration = item->astNode()->asVariableDeclarator();
+                bind(declaration->id(), declaration->init());
+            }
+        } else if (node->isAssignmentOperation()) {
+            auto* assignment = static_cast<AssignmentExpressionNode*>(node);
+            Node* left = assignment->left();
+            Node* right = assignment->right();
+            if (left->isMemberExpression()) {
+                stored(right);
+                auto* member = left->asMemberExpression();
+                if (!member->isPreComputedCase() && member->object()->isIdentifier()) {
+                    (allocationScalarHint(right, false) ? numericFilled : otherFilled).insert(name(member->object()));
+                }
+            } else if (node->isAssignmentExpressionSimple()) {
+                bind(left, right);
+            }
+        } else if (node->type() == ASTNodeType::NewExpression) {
+            auto* creation = static_cast<NewExpressionNode*>(node);
+            for (auto* arg = creation->arguments().begin(); arg != creation->arguments().end(); arg = arg->next()) {
+                stored(arg->astNode());
+            }
+        } else if (node->type() == ASTNodeType::CallExpression) {
+            auto* call = static_cast<CallExpressionNode*>(node);
+            if (!call->callee()->isMemberExpression()) {
+                continue;
+            }
+            auto* member = call->callee()->asMemberExpression();
+            if (!member->isPreComputedCase()) {
+                continue;
+            }
+            auto method = std::string(member->propertyName().string()->toNonGCUTF8StringData().c_str());
+            if (method != "push" && method != "unshift" && method != "set" && method != "add") {
+                continue;
+            }
+            bool scalar = call->arguments().size() != 0;
+            for (auto* arg = call->arguments().begin(); arg != call->arguments().end(); arg = arg->next()) {
+                stored(arg->astNode());
+                scalar &= allocationScalarHint(arg->astNode(), false);
+            }
+            if ((method == "push" || method == "unshift") && member->object()->isIdentifier()) {
+                (scalar ? numericFilled : otherFilled).insert(name(member->object()));
+            }
+        } else if (node->type() == ASTNodeType::Property) {
+            auto* property = node->asProperty();
+            if (property->kind() == PropertyNode::Kind::Init) {
+                stored(property->value());
+            }
+        }
+    }
+    // Alias propagation is bounded by the number of local names, without
+    // looking through nested function bodies or treating an address as a root.
+    bool changed;
+    do {
+        changed = false;
+        for (const auto& alias : aliases) {
+            if (escaping.count(alias.first)) {
+                changed |= escaping.insert(alias.second).second;
+            }
+        }
+    } while (changed);
+    std::unordered_set<Node*> filledArrays;
+    for (const auto& binding : bindings) {
+        for (Node* value : binding.second) {
+            if (escaping.count(binding.first)) {
+                blocked.insert(value);
+            } else if (numericFilled.count(binding.first) && !otherFilled.count(binding.first)) {
+                filledArrays.insert(value);
+            }
+        }
+    }
+    for (Node* node : nodes) {
+        if (blocked.count(node)) {
+            continue;
+        }
+        bool candidate = false;
+        if (node->type() == ASTNodeType::ArrayExpression) {
+            auto& elements = static_cast<ArrayExpressionNode*>(node)->elements();
+            candidate = elements.size() <= 4 && (elements.size() != 0 || filledArrays.count(node));
+            for (auto* item = elements.begin(); candidate && item != elements.end(); item = item->next()) {
+                candidate &= allocationScalarHint(item->astNode(), true);
+            }
+        } else if (node->type() == ASTNodeType::ObjectExpression) {
+            auto& properties = static_cast<ObjectExpressionNode*>(node)->properties();
+            candidate = properties.size() != 0 && properties.size() <= 4;
+            for (auto* item = properties.begin(); candidate && item != properties.end(); item = item->next()) {
+                if (!item->astNode()->isProperty()) {
+                    candidate = false;
+                    break;
+                }
+                auto* property = item->astNode()->asProperty();
+                candidate &= property->kind() == PropertyNode::Kind::Init && !property->computed()
+                    && allocationScalarHint(property->value(), true);
+            }
+        } else if (node->type() == ASTNodeType::NewExpression) {
+            const auto& arguments = static_cast<NewExpressionNode*>(node)->arguments();
+            candidate = arguments.size() <= 4;
+            for (auto* arg = arguments.begin(); candidate && arg != arguments.end(); arg = arg->next()) {
+                candidate &= allocationScalarHint(arg->astNode(), false);
+            }
+        }
+        if (candidate) {
+            context.m_refinedAllocationSites.insert(node);
+        }
+    }
+}
+
 ByteCodeBlock* ByteCodeGenerator::generateByteCode(Context* context, InterpretedCodeBlock* codeBlock, Node* ast, bool inWithFromRuntime, bool cacheByteCode)
 {
     ASSERT(!codeBlock->byteCodeBlock());
@@ -280,6 +470,9 @@ ByteCodeBlock* ByteCodeGenerator::generateByteCode(Context* context, Interpreted
     ctx.m_breakpointContext = &breakpointContext;
 #endif /* ESCARGOT_DEBUGGER */
 
+    if (GC_allocation_pattern_mode() == 4) {
+        findRefinedAllocationSites(ast, ctx);
+    }
     // generate bytecode
     ast->generateStatementByteCode(block, &ctx);
 

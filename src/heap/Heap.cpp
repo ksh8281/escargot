@@ -159,14 +159,18 @@ void Heap::initialize(bool preferIncremental, bool trackDirtyPages, bool preferG
                 patternMode = 1;
             } else if (strcmp(policy.value(), "pattern") == 0) {
                 patternMode = 2;
+            } else if (strcmp(policy.value(), "early") == 0) {
+                patternMode = 3;
+            } else if (strcmp(policy.value(), "refined") == 0) {
+                patternMode = 4;
             }
         }
 #if defined(ENABLE_CODE_CACHE)
         // This prototype emits mode-dependent bytecode; persisted code caches
         // do not yet include the experimental policy in their cache key.
-        RELEASE_ASSERT(patternMode != 2);
+        RELEASE_ASSERT(patternMode < 2);
 #endif
-        size_t threshold = patternMode == 2 ? SIZE_MAX : patternMode == 1 ? 1 : 4 * 1024 * 1024;
+        size_t threshold = patternMode >= 2 ? SIZE_MAX : patternMode == 1 ? 1 : 4 * 1024 * 1024;
         GC_enable_generational(threshold);
         GC_configure_allocation_pattern(patternMode);
     } else if (preferIncremental) {

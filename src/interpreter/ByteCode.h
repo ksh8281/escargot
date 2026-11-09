@@ -117,6 +117,7 @@ struct GlobalVariableAccessCacheItem;
     F(BinaryInOperation)                                                            \
     F(BinaryInstanceOfOperation)                                                    \
     F(BinaryInstanceOfOperationInlineCache)                                         \
+    F(RefinedAllocationHint)                                                         \
     F(AllocationPatternHint)                                                        \
     F(CreateObjectPrepare)                                                          \
     F(CreateObject)                                                                 \
@@ -1125,6 +1126,21 @@ public:
     unsigned m_kind;
 #ifndef NDEBUG
     void dump() { printf("allocationpatternhint %u", m_kind); }
+#endif
+};
+
+class RefinedAllocationHint : public ByteCode {
+public:
+    RefinedAllocationHint(const ByteCodeLOC& loc, unsigned kind)
+        : ByteCode(Opcode::RefinedAllocationHintOpcode, loc)
+        , m_kind(kind)
+        , m_site(GC_new_allocation_pattern_site())
+    {
+    }
+    unsigned m_kind;
+    GC_word m_site;
+#ifndef NDEBUG
+    void dump() { printf("refinedallocationhint %u", m_kind); }
 #endif
 };
 

@@ -189,7 +189,10 @@ public:
         m_block->iterateChildren(fn);
 
         if (m_handler) {
-            m_handler->param()->iterateChildren(fn);
+            Optional<Node*> parameter = m_handler->param();
+            if (parameter) {
+                parameter.value()->iterateChildren(fn);
+            }
             m_handler->body()->iterateChildren(fn);
         }
 

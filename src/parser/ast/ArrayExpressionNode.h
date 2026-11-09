@@ -58,9 +58,15 @@ public:
             return;
         }
 
-        if (GC_allocation_pattern_mode() == 2 && !m_hasSpreadElement
+        if (GC_allocation_pattern_mode() >= 2
+            && (GC_allocation_pattern_mode() != 4 || context->m_refinedAllocationSites.count(this))
+            && !m_hasSpreadElement
             && !m_isTaggedTemplateExpression && m_elements.size() <= 4) {
-            codeBlock->pushCode(AllocationPatternHint(ByteCodeLOC(m_loc.index), 0), context, m_loc.index);
+            if (GC_allocation_pattern_mode() == 4) {
+                codeBlock->pushCode(RefinedAllocationHint(ByteCodeLOC(m_loc.index), 0), context, m_loc.index);
+            } else {
+                codeBlock->pushCode(AllocationPatternHint(ByteCodeLOC(m_loc.index), 0), context, m_loc.index);
+            }
         }
         size_t arrayIndex = codeBlock->currentCodeSize();
         size_t arrLen = 0;

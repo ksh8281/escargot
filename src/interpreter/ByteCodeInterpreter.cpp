@@ -2211,6 +2211,15 @@ ATTRIBUTE_NO_JUMP_TABLES Value Interpreter::interpret(ExecutionState* state, Byt
             NEXT_INSTRUCTION();
         }
 
+        DEFINE_OPCODE(RefinedAllocationHint)
+            :
+        {
+            RefinedAllocationHint* code = (RefinedAllocationHint*)programCounter;
+            GC_note_allocation_pattern_site(code->m_kind, code->m_site);
+            ADD_PROGRAM_COUNTER(RefinedAllocationHint);
+            NEXT_INSTRUCTION();
+        }
+
         DEFINE_OPCODE(AllocationPatternHint)
             :
         {

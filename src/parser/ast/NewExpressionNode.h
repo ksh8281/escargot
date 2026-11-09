@@ -36,6 +36,7 @@ public:
     }
 
     virtual ASTNodeType type() override { return ASTNodeType::NewExpression; }
+    const NodeList& arguments() const { return m_arguments; }
     ByteCodeRegisterIndex generateArguments(ByteCodeBlock* codeBlock, ByteCodeGenerateContext* context, bool clearInCallingExpressionScope = true)
     {
         ByteCodeRegisterIndex ret = context->getRegister();
@@ -104,8 +105,14 @@ public:
 
         // Bounded argument count is a weak allocation hint, not a size or
         // lifetime guarantee (constructors can return existing objects).
-        if (GC_allocation_pattern_mode() == 2 && !m_hasSpreadElement && m_arguments.size() <= 4) {
-            codeBlock->pushCode(AllocationPatternHint(ByteCodeLOC(m_loc.index), 2), context, m_loc.index);
+        if (GC_allocation_pattern_mode() >= 2
+            && (GC_allocation_pattern_mode() != 4 || context->m_refinedAllocationSites.count(this))
+            && !m_hasSpreadElement && m_arguments.size() <= 4) {
+            if (GC_allocation_pattern_mode() == 4) {
+                codeBlock->pushCode(RefinedAllocationHint(ByteCodeLOC(m_loc.index), 2), context, m_loc.index);
+            } else {
+                codeBlock->pushCode(AllocationPatternHint(ByteCodeLOC(m_loc.index), 2), context, m_loc.index);
+            }
         }
         if (m_hasSpreadElement) {
             codeBlock->pushCode(NewOperationWithSpreadElement(ByteCodeLOC(m_loc.index), callee, argumentsStartIndex, m_arguments.size(), dstRegister), context, this->m_loc.index);

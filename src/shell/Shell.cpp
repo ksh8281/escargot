@@ -1689,6 +1689,13 @@ static __attribute__((noinline)) int shellMain(int argc, char* argv[], void* tar
     fprintf(stderr, "LARGE_BUDGET_AUDIT {\"samples\":%lu,\"budget_limited\":%lu,\"cap_limited\":%lu,\"sum\":%lu,\"min\":%lu,\"max\":%lu}\n", (unsigned long)GC_large_budget_samples, (unsigned long)GC_large_budget_limited, (unsigned long)GC_large_budget_cap_limited, (unsigned long)GC_large_budget_sum, (unsigned long)GC_large_budget_min, (unsigned long)GC_large_budget_max);
     fprintf(stderr, "GENERATIONAL_EPOCH_AUDIT {\"multi_minor_epochs\":%lu,\"max_epoch_minors\":%lu,\"current_epoch_minors\":%lu}\n", multiMinorEpochs, maxEpochMinors > epochMinors ? maxEpochMinors : epochMinors, epochMinors);
     fprintf(stderr, "YOUNG_SOURCE_AUDIT {\"old_source_blocks\":%lu,\"empty_source_blocks\":%lu,\"manual_mark_recoveries\":%lu,\"current_bit_blocks\":%lu}\n", (unsigned long)GC_young_old_source_blocks, (unsigned long)GC_young_old_source_empty, (unsigned long)GC_young_old_source_recoveries, (unsigned long)GC_young_bit_source_blocks);
+    GC_word refinedStats[8];
+    GC_allocation_refined_stats(refinedStats);
+    fprintf(stderr, "ALLOCATION_REFINED_AUDIT {\"sites\":%lu,\"evidence\":%lu,\"failed_trials\":%lu,\"activation_gc\":%lu,\"activation_hints\":%lu,\"activation_evidence\":%lu,\"activation_allocated\":%lu,\"rejected_site\":%lu}\n",
+        (unsigned long)refinedStats[0], (unsigned long)refinedStats[1],
+        (unsigned long)refinedStats[2], (unsigned long)refinedStats[3],
+        (unsigned long)refinedStats[4], (unsigned long)refinedStats[5],
+        (unsigned long)refinedStats[6], (unsigned long)refinedStats[7]);
     GC_word patternStats[8];
     GC_allocation_pattern_stats(patternStats);
     fprintf(stderr, "ALLOCATION_PATTERN_AUDIT {\"mode\":%lu,\"hints\":%lu,\"array\":%lu,\"object\":%lu,\"construct\":%lu,\"activations\":%lu,\"quiet_closings\":%lu,\"quiet_fulls\":%lu}\n",

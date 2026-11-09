@@ -47,6 +47,7 @@ public:
     }
 
     virtual ASTNodeType type() override { return ASTNodeType::VariableDeclaration; }
+    const NodeList& declarations() const { return m_declarations; }
     EscargotLexer::KeywordKind kind()
     {
         return m_kind;
@@ -83,7 +84,10 @@ public:
 
         for (SentinelNode* declaration = m_declarations.begin(); declaration != m_declarations.end(); declaration = declaration->next()) {
             declaration->astNode()->asVariableDeclarator()->id()->iterateChildren(fn);
-            declaration->astNode()->asVariableDeclarator()->init()->iterateChildren(fn);
+            Optional<Node*> init = declaration->astNode()->asVariableDeclarator()->init();
+            if (init) {
+                init.value()->iterateChildren(fn);
+            }
         }
     }
 
