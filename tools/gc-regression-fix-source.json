@@ -1,5 +1,5 @@
 {
-  "gc_revision": "bb11d1281848c585178730e66759dc9d52f61af5",
+  "gc_revision": "24c9f53abc7094b93a1bb6820514589605aed6e1",
   "before_revision": "d6bf643c6458fb7afbb9dbefb5583686b9e214e5",
   "files": {
     "src/heap/Heap.cpp": "ed38359993327d6a45eb5eb0bbd4cef0ce9c070a86198836d2706c025710e52a",
@@ -16,7 +16,7 @@
     "src/runtime/VMInstance.cpp": "b4877c8d16d79ad279571fe7df11d16a0cb4eb0643bc710a3ca85423264873b1",
     "src/shell/Shell.cpp": "5da93b22495fa088b676d2b38041c219bf6220e67d4b02d13f8ae8e781ce337b",
     "third_party/GCutil/allchblk.c": "097c935534a2925223120358c1d42f73bafca55ff28c8a65ccef9de25b481a5b",
-    "third_party/GCutil/alloc.c": "b850de5cc6156b872c128ecffe80162fd922a14634a21ccef30871bbc276a30b",
+    "third_party/GCutil/alloc.c": "754813891791522fc7cb80f5c47df1c2c10cf09ea8c77895e67681bc4b573f88",
     "third_party/GCutil/include/gc/gc.h": "4ed3c48267348da62314a82e1d7f88d2044b37bec578e32f1b3e7c6887453598",
     "third_party/GCutil/include/private/gc_priv.h": "16686d47ab8232adb57846d210e396a988673ae5b8a39fdc3a3e0dbcdbe18aae",
     "third_party/GCutil/malloc.c": "3261b45e764df12906739a6535708a383c926a0f7112bf5e6ce4223e989e66eb",
@@ -30,6 +30,7 @@
     "tools/arm-cold-epoch-settings.json": "63ed18b8083fc6c2fb4d37ebd997fe2fdd3f53ec72ebc5f03c96b9903a25f965",
     "tools/deqp-allocation-patterns.js": "f508004614bdd4a0d77a586ce8e03e09eb29a25579add9f78ab0ae950da2d870",
     "tools/arm-gc-regression-fix.py": "5542c418a5e7e63ee4f2c548b37079a419193a3b12f3ca0ba799bfd4d8e069be",
-    "tools/arm-gc-regression-octane.py": "f9d0149d2e6798796ac796d5d73ee6eb53d3c74ca4016abd9f28ed2f49541706"
+    "tools/arm-gc-regression-octane.py": "f9d0149d2e6798796ac796d5d73ee6eb53d3c74ca4016abd9f28ed2f49541706",
+    "tools/arm-gc-phase-retry-compare.py": "ccc72053113c39fadaac1b0ec3aac198b7aff14feb6798dba14f3ad0ae38aadd"
   }
 }
