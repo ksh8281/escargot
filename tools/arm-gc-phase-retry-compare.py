@@ -29,6 +29,22 @@ def parse_cycles(text):
     return result
 
 
+def parse_context_result(name, row, text):
+    if name != 'web_tooling':
+        r.parse_result(name, row, text)
+        return
+    raw = json.loads(re.search(r'^WTB_SCORE_JSON (.*)$', text, re.M)[1])
+    assert len(raw['tests']) == 18
+    assert {t['name'] for t in raw['tests']} == r.WTB_NAMES
+    assert raw['score'] > 0
+    for test in raw['tests']:
+        expected = 20 if test['name'] == 'terser' else 3
+        assert test['samples'] == expected
+        assert len(test['sample_seconds']) == expected
+        assert test['hz'] > 0 and all(v > 0 for v in test['sample_seconds'])
+    row.update(score=raw['score'], tests=raw['tests'])
+
+
 def main():
     source = Path.cwd().resolve()
     root = Path(os.environ['BENCHMARK_OUTPUT_DIR']).resolve()
@@ -96,8 +112,8 @@ def main():
         'candidate_alloc_sha256': c.sha256(alloc),
         'inputs': json.loads((root / 'benchmark-inputs.json').read_text()),
         'build': json.loads((root / 'build-arm32.json').read_text()),
-        'protocol': 'Native ARM32 default build options. Identical build directory/toolchain with only alloc.c reverted to bb11d128 for the control; source restored afterward. Three fresh-process alternating before/after pairs of WTB18 in original order with original preceding workloads and warmup: all cases retain 3 samples except Terser, which uses 20. Record each sample; its first three provide a separate short-window diagnostic. This extended Terser result is not the stock three-sample WTB score. If the first pair loses >10% on Terser and >2% aggregate, stop the rejected candidate early. Otherwise also run three alternating isolated Splay pairs with original preloads, and one complete original-order Octane17 pair as a guard. FSD12, seed1. No RSS sampler, no cycle tracing, no local VM-region-limit override. One Octane pair is diagnostic, not stable whole-suite acceptance. No separate full-GC control or ARM64 run.',
-        'rows': [], 'failures': []}
+        'protocol': 'Native ARM32 default build options. Identical build directory/toolchain with only alloc.c reverted to bb11d128 for the control; source restored afterward. Remaining two fresh-process alternating before/after pairs of WTB18 (pair one is retained from run 42792763196) in original order with original preceding workloads and warmup: all cases retain 3 samples except Terser, which uses 20. Record each sample; its first three provide a separate short-window diagnostic. This extended Terser result is not the stock three-sample WTB score. If the first continuation pair loses >10% on Terser and >2% aggregate, stop the rejected candidate early. Otherwise also run three alternating isolated Splay pairs with original preloads, and one complete original-order Octane17 pair as a guard. FSD12, seed1. No RSS sampler, no cycle tracing, no local VM-region-limit override. One Octane pair is diagnostic, not stable whole-suite acceptance. No separate full-GC control or ARM64 run.',
+        'prior_run': 42792763196, 'rows': [], 'failures': []}
     def save():
         c.write_json(report / 'measurements.json', data)
     def measure(name, directory, script, mode, repeat, context=False):
@@ -106,7 +122,7 @@ def main():
         try:
             row, text = c.process_measure(label, mode, commands[mode], directory, script, env, report, cpu, monitor, False)
             if context:
-                r.parse_result(name, row, text)
+                parse_context_result(name, row, text)
             else:
                 row['score'] = float(re.search('^' + name + r': ([0-9.]+)$', text, re.M)[1])
             row.update(name=name, repeat=repeat, context=context, status='passed', audits=p.a.audits(text), cycles=parse_cycles(text))
@@ -118,7 +134,9 @@ def main():
         save()
     save()
     wtb_suite = next(x for x in stock if x[0] == 'web_tooling')
-    for rep in range(3):
+    # Pair one completed in prior_run; only its stock parser rejected it.
+    # Continue the remaining pairs without repeating those engine executions.
+    for rep in range(1, 3):
         order = ['before', 'after'] if rep % 2 == 0 else ['after', 'before']
         for mode in order:
             measure(*wtb_suite, mode, rep + 1, True)
@@ -126,7 +144,7 @@ def main():
             break
         pair = {x['mode']: x for x in data['rows']
                 if x['name'] == 'web_tooling' and x['repeat'] == rep + 1}
-        if rep == 0:
+        if rep == 1:
             terser_scores = {m: next(t['hz'] for t in row['tests'] if t['name'] == 'terser')
                              for m, row in pair.items()}
             if (terser_scores['after'] < terser_scores['before'] * 0.90
