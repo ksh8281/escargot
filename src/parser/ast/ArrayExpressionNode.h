@@ -59,7 +59,7 @@ public:
         }
 
         if (GC_allocation_pattern_mode() >= 2
-            && (GC_allocation_pattern_mode() != 4 || context->m_refinedAllocationSites.count(this))
+            && (GC_allocation_pattern_mode() != 4 || context->isRefinedAllocationSite(this))
             && !m_hasSpreadElement
             && !m_isTaggedTemplateExpression && m_elements.size() <= 4) {
             if (GC_allocation_pattern_mode() == 4) {

@@ -106,7 +106,7 @@ public:
         // Bounded argument count is a weak allocation hint, not a size or
         // lifetime guarantee (constructors can return existing objects).
         if (GC_allocation_pattern_mode() >= 2
-            && (GC_allocation_pattern_mode() != 4 || context->m_refinedAllocationSites.count(this))
+            && (GC_allocation_pattern_mode() != 4 || context->isRefinedAllocationSite(this))
             && !m_hasSpreadElement && m_arguments.size() <= 4) {
             if (GC_allocation_pattern_mode() == 4) {
                 codeBlock->pushCode(RefinedAllocationHint(ByteCodeLOC(m_loc.index), 2), context, m_loc.index);

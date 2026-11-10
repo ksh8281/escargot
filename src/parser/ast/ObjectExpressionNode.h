@@ -57,7 +57,7 @@ public:
     virtual void generateExpressionByteCode(ByteCodeBlock* codeBlock, ByteCodeGenerateContext* context, ByteCodeRegisterIndex dstRegister) override
     {
         if (GC_allocation_pattern_mode() >= 2
-            && (GC_allocation_pattern_mode() != 4 || context->m_refinedAllocationSites.count(this))
+            && (GC_allocation_pattern_mode() != 4 || context->isRefinedAllocationSite(this))
             && m_properties.size() <= 4) {
             bool simple = true;
             for (SentinelNode* property = m_properties.begin(); property != m_properties.end(); property = property->next()) {

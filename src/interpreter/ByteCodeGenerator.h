@@ -122,6 +122,11 @@ struct ByteCodeGenerateContext {
     {
     }
 
+    bool isRefinedAllocationSite(Node* node) const
+    {
+        return m_refinedAllocationSites && m_refinedAllocationSites.value()->count(node);
+    }
+
     void propagateInformationTo(ByteCodeGenerateContext& ctx)
     {
         ctx.m_breakStatementPositions.insert(ctx.m_breakStatementPositions.end(), m_breakStatementPositions.begin(), m_breakStatementPositions.end());
@@ -371,8 +376,8 @@ struct ByteCodeGenerateContext {
     size_t m_baseRegisterCount;
 
     InterpretedCodeBlock* m_codeBlock;
-    // Non-owning, non-null AST nodes; valid only while this AST is compiled.
-    std::unordered_set<Node*> m_refinedAllocationSites;
+    // Borrowed from the root compilation; child contexts share the result.
+    Optional<const std::unordered_set<Node*>*> m_refinedAllocationSites;
     ByteCodeBlock* m_byteCodeBlock;
     std::vector<std::pair<size_t, size_t>, std::allocator<std::pair<size_t, size_t>>>* m_locData; // used only for calculating location info
 
