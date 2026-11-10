@@ -306,16 +306,16 @@ static bool allocationScalarHint(Optional<Node*> value, bool allowReferences)
     }
 }
 
-static bool allocationCandidateShape(Node* node)
+static bool allocationCandidateShape(Node* node, ASTNodeType type)
 {
     bool candidate = false;
-    if (node->type() == ASTNodeType::ArrayExpression) {
+    if (type == ASTNodeType::ArrayExpression) {
         auto& elements = static_cast<ArrayExpressionNode*>(node)->elements();
         candidate = elements.size() <= 4;
         for (auto* item = elements.begin(); candidate && item != elements.end(); item = item->next()) {
             candidate &= allocationScalarHint(item->astNode(), true);
         }
-    } else if (node->type() == ASTNodeType::ObjectExpression) {
+    } else if (type == ASTNodeType::ObjectExpression) {
         auto& properties = static_cast<ObjectExpressionNode*>(node)->properties();
         candidate = properties.size() != 0 && properties.size() <= 4;
         for (auto* item = properties.begin(); candidate && item != properties.end(); item = item->next()) {
@@ -327,7 +327,7 @@ static bool allocationCandidateShape(Node* node)
             candidate &= property->kind() == PropertyNode::Kind::Init && !property->computed()
                 && allocationScalarHint(property->value(), true);
         }
-    } else if (node->type() == ASTNodeType::NewExpression) {
+    } else if (type == ASTNodeType::NewExpression) {
         const auto& arguments = static_cast<NewExpressionNode*>(node)->arguments();
         candidate = arguments.size() <= 4;
         for (auto* arg = arguments.begin(); candidate && arg != arguments.end(); arg = arg->next()) {
@@ -346,14 +346,15 @@ static void findRefinedAllocationSites(Node* ast, const ByteCodeGenerateContext&
     Node* scope = ast->type() == ASTNodeType::Function ? static_cast<FunctionNode*>(ast)->body() : ast;
     std::vector<Node*> nodes, candidates;
     scope->iterateChildren([&](Node* node) {
-        if (allocationCandidateShape(node)) {
+        ASTNodeType type = node->type();
+        if (allocationCandidateShape(node, type)) {
             candidates.push_back(node);
         }
-        if (node->isAssignmentOperation()
-            || node->type() == ASTNodeType::VariableDeclaration
-            || node->type() == ASTNodeType::NewExpression
-            || node->type() == ASTNodeType::CallExpression
-            || node->type() == ASTNodeType::Property) {
+        if ((type >= ASTNodeType::AssignmentExpression && type <= ASTNodeType::AssignmentExpressionSimple)
+            || type == ASTNodeType::VariableDeclaration
+            || type == ASTNodeType::NewExpression
+            || type == ASTNodeType::CallExpression
+            || type == ASTNodeType::Property) {
             nodes.push_back(node);
         }
     });

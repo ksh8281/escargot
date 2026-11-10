@@ -1,11 +1,10 @@
 {
-  "runtime_revision": "e49cfa60a048b85bf02f057a0d506be53d109e16",
   "gc_revision": "bb11d1281848c585178730e66759dc9d52f61af5",
   "before_revision": "d6bf643c6458fb7afbb9dbefb5583686b9e214e5",
   "files": {
     "src/heap/Heap.cpp": "ed38359993327d6a45eb5eb0bbd4cef0ce9c070a86198836d2706c025710e52a",
     "src/interpreter/ByteCode.h": "f6fff9f89245d3f2b568c963aa8b835bdeac30c0d66420e4edb59696d4cd876c",
-    "src/interpreter/ByteCodeGenerator.cpp": "a195a6f3770a9dfe1acf270aa50c35b9ad69127bfaa8ea53fa0d5160898da6fe",
+    "src/interpreter/ByteCodeGenerator.cpp": "567bd84b8979fdeb3c415f0aad66446c6ec44571530e7b65ae1aed6932ee110f",
     "src/interpreter/ByteCodeGenerator.h": "2ded22023e4c1a25c58d0c8950f111b2300ffb90b2f8d0fa9c8fa337f2594022",
     "src/interpreter/ByteCodeInterpreter.cpp": "aabea194759dc4f369263162158e3b4e69fb2674dfdb900fa16fb7e5988074f4",
     "src/parser/ast/ArrayExpressionNode.h": "bb16a5b84d7f4acdf1b25b14a71214a3dd76244cc7c2cfa0caf0cf020f4d95bf",
