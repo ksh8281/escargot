@@ -66,7 +66,8 @@ def main():
     harness = Path(os.environ['BENCHMARK_HARNESS']).resolve()
     arch = os.environ['BENCHMARK_ARCHITECTURE']
     assert arch in ('arm32', 'arm64')
-    assert int(os.environ['BENCHMARK_REPETITIONS']) == 3
+    pairs = int(os.environ['BENCHMARK_REPETITIONS'])
+    assert pairs in (1, 3)
     report = root / ('gc-sideeffects-' + arch)
     report.mkdir()
     binary = source.parent / ('build-' + arch) / 'escargot'
@@ -106,14 +107,24 @@ def main():
         data['summary'] = summarize(data['rows'])
         c.write_json(report / 'measurements.json', data)
 
+    if pairs == 1:
+        data['protocol'] = ('Focused follow-up: one fresh-process pair each of whole stock WTB18 and original-order Octane17; three alternating isolated CodeLoad pairs with every Octane preload retained; one cycle-traced original prefix through Splay, retaining all later suite roots; one pair per existing allocation workload at scale5. The one-pair stock guards and modified diagnostic contexts are not a new stable full-suite baseline. Same binary/default flags/FSD12/seed1; reject engine, checksum, parser and unexpected fallback errors.')
+
     def measure(name, directory, driver, mode, repeat, pattern=False):
         label = name + '-' + str(repeat) + '-' + mode
         try:
             row, contents = c.process_measure(label, mode, commands[mode], directory,
-                driver, envs[mode], report, cpu, monitor, False)
+                driver, {**envs[mode], **({'ESCARGOT_GC_CYCLE_TRACE': '1'}
+                    if name == 'splay_prefix' else {})}, report, cpu, monitor, False)
             row.update(name=name, repeat=repeat, status='passed', audits=p.a.audits(contents))
             if pattern:
                 row['benchmark'] = p.a.parse_bench(contents, name)
+            elif name in ('codeload', 'splay_prefix'):
+                cases = ['CodeLoad'] if name == 'codeload' else ['Splay', 'SplayLatency']
+                row['subtests'] = {case: float(re.search(r'^' + case + r': ([0-9.]+)$', contents, re.M)[1]) for case in cases}
+                assert all(value > 0 for value in row['subtests'].values())
+                row['score'] = row['subtests'][cases[0]]
+                row['diagnostic'] = True
             else:
                 r.parse_result(name, row, contents)
                 if name == 'web_tooling':
@@ -130,7 +141,7 @@ def main():
     try:
         for name in ['web_tooling', 'octane']:
             _, directory, driver = next(x for x in stock if x[0] == name)
-            for repeat in range(3):
+            for repeat in range(pairs):
                 for mode in (['full', 'refined'] if repeat % 2 == 0 else ['refined', 'full']):
                     measure(name, directory, driver, mode, repeat + 1)
                 summary = data['summary'][name]
@@ -141,6 +152,22 @@ def main():
                         save()
                         print('Gross first-pair loss; stopped remaining measurements', flush=True)
                         return
+        if pairs == 1:
+            _, directory, _ = next(x for x in stock if x[0] == 'octane')
+            original = (directory / 'run.js').read_text()
+            needle = 'NotifyScore: PrintScore });'
+            assert original.count(needle) == 1
+            for name, skip in [
+                ('codeload', 'BenchmarkSuite.suites.filter(function(s){return s.name!=="CodeLoad";}).map(function(s){return s.name;})'),
+                ('splay_prefix', 'BenchmarkSuite.suites.slice(BenchmarkSuite.suites.map(function(s){return s.name;}).indexOf("Splay")+1).map(function(s){return s.name;})')]:
+                driver = report / (name + '.js')
+                text = original.replace(needle, 'NotifyScore: PrintScore }, ' + skip + ');')
+                if name == 'splay_prefix':
+                    text = text.replace('BenchmarkSuite.RunSuites({ NotifyResult:', 'BenchmarkSuite.RunSuites({ NotifyStart: function(name){print("PHASE_START "+name);}, NotifyResult:')
+                driver.write_text(text)
+                for repeat in range(3 if name == 'codeload' else 1):
+                    for mode in (['full', 'refined'] if repeat % 2 == 0 else ['refined', 'full']):
+                        measure(name, directory, driver, mode, repeat + 1)
         for index, name in enumerate(p.a.NAMES):
             driver = report / (name + '.js')
             driver.write_text(p.a.driver_text(name))
