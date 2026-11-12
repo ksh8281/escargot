@@ -313,7 +313,7 @@ static bool allocationCandidateShape(Node* node, ASTNodeType type)
         auto& elements = static_cast<ArrayExpressionNode*>(node)->elements();
         candidate = elements.size() <= 4;
         for (auto* item = elements.begin(); candidate && item != elements.end(); item = item->next()) {
-            candidate &= allocationScalarHint(item->astNode(), true);
+            candidate &= allocationScalarHint(item->astNode(), false);
         }
     } else if (type == ASTNodeType::ObjectExpression) {
         auto& properties = static_cast<ObjectExpressionNode*>(node)->properties();
@@ -325,7 +325,7 @@ static bool allocationCandidateShape(Node* node, ASTNodeType type)
             }
             auto* property = item->astNode()->asProperty();
             candidate &= property->kind() == PropertyNode::Kind::Init && !property->computed()
-                && allocationScalarHint(property->value(), true);
+                && allocationScalarHint(property->value(), false);
         }
     } else if (type == ASTNodeType::NewExpression) {
         const auto& arguments = static_cast<NewExpressionNode*>(node)->arguments();
@@ -366,7 +366,7 @@ static void findRefinedAllocationSites(Node* ast, const ByteCodeGenerateContext&
     std::unordered_map<String*, std::vector<Node*>> bindings;
     std::vector<std::pair<String*, String*>> aliases;
     std::unordered_set<String*> escaping, numericFilled, otherFilled;
-    std::unordered_set<Node*> blocked;
+    std::unordered_set<Node*> blocked, numericInitialized;
     auto name = [](Node* node) { return node->asIdentifier()->name().string(); };
     auto stored = [&](Node* node) {
         if (node->isIdentifier()) {
@@ -415,6 +415,19 @@ static void findRefinedAllocationSites(Node* ast, const ByteCodeGenerateContext&
                 continue;
             }
             auto* member = call->callee()->asMemberExpression();
+            // An empty constructor argument list carries no scalar evidence.
+            // A directly chained numeric initializer can supply that evidence
+            // without relying on a constructor or method name.
+            if (member->object()->type() == ASTNodeType::NewExpression
+                && call->arguments().size() != 0 && call->arguments().size() <= 4) {
+                bool numeric = true;
+                for (auto* arg = call->arguments().begin(); numeric && arg != call->arguments().end(); arg = arg->next()) {
+                    numeric &= allocationScalarHint(arg->astNode(), false);
+                }
+                if (numeric) {
+                    numericInitialized.insert(member->object());
+                }
+            }
             if (!member->isPreComputedCase()) {
                 continue;
             }
@@ -465,6 +478,11 @@ static void findRefinedAllocationSites(Node* ast, const ByteCodeGenerateContext&
         if (node->type() == ASTNodeType::ArrayExpression
             && static_cast<ArrayExpressionNode*>(node)->elements().size() == 0
             && !filledArrays.count(node)) {
+            continue;
+        }
+        if (node->type() == ASTNodeType::NewExpression
+            && static_cast<NewExpressionNode*>(node)->arguments().size() == 0
+            && !numericInitialized.count(node)) {
             continue;
         }
         sites.insert(node);

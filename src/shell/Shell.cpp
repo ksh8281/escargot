@@ -96,6 +96,7 @@ extern GC_MAY_THREAD_LOCAL GC_word GC_admission_backoff_resets;
 extern GC_MAY_THREAD_LOCAL GC_word GC_admission_quiet_hints;
 extern GC_MAY_THREAD_LOCAL GC_word GC_admission_full_rw_epochs;
 extern GC_MAY_THREAD_LOCAL GC_word GC_admission_full_rw_hints;
+extern int GC_admission_tracking_is_paused(void);
 extern GC_MAY_THREAD_LOCAL GC_word GC_large_defer_epochs;
 extern GC_MAY_THREAD_LOCAL GC_word GC_large_defer_attempts;
 extern GC_MAY_THREAD_LOCAL GC_word GC_large_defer_success;
@@ -1715,6 +1716,7 @@ static __attribute__((noinline)) int shellMain(int argc, char* argv[], void* tar
         full, minor, GC_is_incremental_mode(), GC_get_actual_vdb(), GC_get_full_freq(),
         GC_get_time_limit(), markMs[1], markMs[0], reclaimMs[1], reclaimMs[0],
         GC_get_heap_size(), GC_get_free_bytes());
+    fprintf(stderr, "TRACKING_PAUSE_AUDIT {\"paused\":%d}\n", GC_admission_tracking_is_paused());
     fprintf(stderr, "PHONE_MODE_AUDIT {\"gc_no\":%lu,\"incremental\":%d,\"free_space_divisor\":%lu,\"heap_bytes\":%zu,\"free_bytes\":%zu}\n",
         (unsigned long)GC_get_gc_no(), GC_is_incremental_mode(),
         (unsigned long)GC_get_free_space_divisor(), GC_get_heap_size(), GC_get_free_bytes());
