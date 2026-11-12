@@ -376,15 +376,26 @@ static void findRefinedAllocationSites(Node* ast, std::unordered_set<Node*>& sit
     std::unordered_set<String*> escaping, numericFilled, otherFilled;
     std::unordered_set<Node*> blocked, numericInitialized;
     auto name = [](Node* node) { return node->asIdentifier()->name().string(); };
+    auto allocation = [](Node* node) {
+        ASTNodeType type = node->type();
+        return type == ASTNodeType::ArrayExpression
+            || type == ASTNodeType::ObjectExpression
+            || type == ASTNodeType::NewExpression;
+    };
     auto stored = [&](Node* node) {
         if (node->isIdentifier()) {
             escaping.insert(name(node));
-        } else {
+        } else if (allocation(node)) {
             blocked.insert(node);
         }
     };
     auto bind = [&](Node* id, Optional<Node*> value) {
         if (!id->isIdentifier() || !value) {
+            return;
+        }
+        // Only allocation nodes can become sites. Other values cannot gain
+        // eligibility through a binding; identifiers still carry aliases.
+        if (!value.value()->isIdentifier() && !allocation(value.value())) {
             return;
         }
         bindings[name(id)].push_back(value.value());
