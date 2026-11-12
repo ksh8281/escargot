@@ -35,6 +35,24 @@ class Node;
 class InterpretedCodeBlock;
 class ClassSourceText;
 
+class RefinedAllocationAnalysis {
+public:
+    RefinedAllocationAnalysis(Node* ast, bool enabled)
+        : m_ast(ast)
+        , m_enabled(enabled)
+        , m_initialized(false)
+    {
+    }
+
+    bool contains(Node* node) const;
+
+private:
+    Node* m_ast;
+    bool m_enabled;
+    mutable bool m_initialized;
+    mutable std::unordered_set<Node*> m_sites;
+};
+
 struct ClassContextInformation {
     ClassContextInformation()
         : m_constructorIndex(SIZE_MAX)
@@ -75,7 +93,7 @@ struct ByteCodeGenerateContext {
     ByteCodeGenerateContext(const ByteCodeGenerateContext& contextBefore)
         : m_baseRegisterCount(contextBefore.m_baseRegisterCount)
         , m_codeBlock(contextBefore.m_codeBlock)
-        , m_refinedAllocationSites(contextBefore.m_refinedAllocationSites)
+        , m_refinedAllocationAnalysis(contextBefore.m_refinedAllocationAnalysis)
         , m_byteCodeBlock(contextBefore.m_byteCodeBlock)
         , m_locData(contextBefore.m_locData)
         , m_isGlobalScope(contextBefore.m_isGlobalScope)
@@ -124,7 +142,7 @@ struct ByteCodeGenerateContext {
 
     bool isRefinedAllocationSite(Node* node) const
     {
-        return m_refinedAllocationSites && m_refinedAllocationSites.value()->count(node);
+        return m_refinedAllocationAnalysis && m_refinedAllocationAnalysis.value()->contains(node);
     }
 
     void propagateInformationTo(ByteCodeGenerateContext& ctx)
@@ -377,7 +395,7 @@ struct ByteCodeGenerateContext {
 
     InterpretedCodeBlock* m_codeBlock;
     // Borrowed from the root compilation; child contexts share the result.
-    Optional<const std::unordered_set<Node*>*> m_refinedAllocationSites;
+    Optional<const RefinedAllocationAnalysis*> m_refinedAllocationAnalysis;
     ByteCodeBlock* m_byteCodeBlock;
     std::vector<std::pair<size_t, size_t>, std::allocator<std::pair<size_t, size_t>>>* m_locData; // used only for calculating location info
 

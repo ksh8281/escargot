@@ -349,12 +349,8 @@ static bool allocationCandidateShape(Node* node, ASTNodeType type)
     return candidate;
 }
 
-static void findRefinedAllocationSites(Node* ast, const ByteCodeGenerateContext& context,
-                                      std::unordered_set<Node*>& sites)
+static void findRefinedAllocationSites(Node* ast, std::unordered_set<Node*>& sites)
 {
-    if (context.m_codeBlock->hasEval() || context.m_isWithScope) {
-        return;
-    }
     Node* scope = ast->type() == ASTNodeType::Function ? static_cast<FunctionNode*>(ast)->body() : ast;
     std::vector<Node*> nodes, candidates;
     scope->iterateChildren([&](Node* node) {
@@ -523,6 +519,24 @@ static void findRefinedAllocationSites(Node* ast, const ByteCodeGenerateContext&
     }
 }
 
+bool RefinedAllocationAnalysis::contains(Node* node) const
+{
+    if (!m_enabled) {
+        return false;
+    }
+    if (!m_initialized) {
+        // Code generation already visits every emitted allocation. Avoid a
+        // separate AST walk when none has a qualifying shape. A first match
+        // still analyzes the entire scope, including later escapes/stores.
+        if (!allocationCandidateShape(node, node->type())) {
+            return false;
+        }
+        findRefinedAllocationSites(m_ast, m_sites);
+        m_initialized = true;
+    }
+    return m_sites.count(node);
+}
+
 ByteCodeBlock* ByteCodeGenerator::generateByteCode(Context* context, InterpretedCodeBlock* codeBlock, Node* ast, bool inWithFromRuntime, bool cacheByteCode)
 {
     ASSERT(!codeBlock->byteCodeBlock());
@@ -548,12 +562,11 @@ ByteCodeBlock* ByteCodeGenerator::generateByteCode(Context* context, Interpreted
     ctx.m_breakpointContext = &breakpointContext;
 #endif /* ESCARGOT_DEBUGGER */
 
-    // All child contexts borrow this immutable result for this compilation.
-    // Keep the owner here until code generation (including nested scopes) ends.
-    std::unordered_set<Node*> refinedAllocationSites;
+    // Child contexts share one compilation-local analysis. Capture the
+    // initial scope restrictions before statement generation can change them.
+    RefinedAllocationAnalysis refinedAllocationAnalysis(ast, !codeBlock->hasEval() && !ctx.m_isWithScope);
     if (GC_allocation_pattern_mode() == 4) {
-        findRefinedAllocationSites(ast, ctx, refinedAllocationSites);
-        ctx.m_refinedAllocationSites = &refinedAllocationSites;
+        ctx.m_refinedAllocationAnalysis = &refinedAllocationAnalysis;
     }
     // generate bytecode
     ast->generateStatementByteCode(block, &ctx);
