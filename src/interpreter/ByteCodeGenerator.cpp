@@ -354,7 +354,8 @@ static void findRefinedAllocationSites(Node* ast, std::unordered_set<Node*>& sit
     std::vector<Node*> candidates;
     // Identifier names are already canonical AtomicStrings. Reuse their
     // non-null identities instead of allocating UTF-8 copies for each use.
-    std::unordered_map<String*, std::vector<Node*>> bindings;
+    // Bindings are consumed in one pass; grouping them by name adds no lookup.
+    std::vector<std::pair<String*, Node*>> bindings;
     std::vector<std::pair<String*, String*>> aliases;
     std::unordered_set<String*> escaping, numericFilled, otherFilled;
     std::unordered_set<Node*> blocked, numericInitialized;
@@ -381,7 +382,7 @@ static void findRefinedAllocationSites(Node* ast, std::unordered_set<Node*>& sit
         if (!value.value()->isIdentifier() && !allocation(value.value())) {
             return;
         }
-        bindings[name(id)].push_back(value.value());
+        bindings.emplace_back(name(id), value.value());
         if (value.value()->isIdentifier()) {
             aliases.emplace_back(name(id), name(value.value()));
         }
@@ -477,16 +478,14 @@ static void findRefinedAllocationSites(Node* ast, std::unordered_set<Node*>& sit
     } while (changed);
     std::unordered_set<Node*> filledArrays, modifiedArrays;
     for (const auto& binding : bindings) {
-        for (Node* value : binding.second) {
-            if (escaping.count(binding.first)) {
-                blocked.insert(value);
-            } else {
-                if (numericFilled.count(binding.first) || otherFilled.count(binding.first)) {
-                    modifiedArrays.insert(value);
-                }
-                if (numericFilled.count(binding.first) && !otherFilled.count(binding.first)) {
-                    filledArrays.insert(value);
-                }
+        if (escaping.count(binding.first)) {
+            blocked.insert(binding.second);
+        } else {
+            if (numericFilled.count(binding.first) || otherFilled.count(binding.first)) {
+                modifiedArrays.insert(binding.second);
+            }
+            if (numericFilled.count(binding.first) && !otherFilled.count(binding.first)) {
+                filledArrays.insert(binding.second);
             }
         }
     }
