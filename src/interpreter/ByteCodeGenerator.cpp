@@ -324,6 +324,7 @@ static bool allocationCandidateShape(Node* node, ASTNodeType type)
     } else if (type == ASTNodeType::ObjectExpression) {
         auto& properties = static_cast<ObjectExpressionNode*>(node)->properties();
         candidate = properties.size() != 0 && properties.size() <= 4;
+        bool computed = false;
         for (auto* item = properties.begin(); candidate && item != properties.end(); item = item->next()) {
             if (!item->astNode()->isProperty()) {
                 candidate = false;
@@ -332,7 +333,12 @@ static bool allocationCandidateShape(Node* node, ASTNodeType type)
             auto* property = item->astNode()->asProperty();
             candidate &= property->kind() == PropertyNode::Kind::Init && !property->computed()
                 && allocationScalarHint(property->value(), false);
+            if (candidate && property->value()->type() != ASTNodeType::Literal) {
+                computed = true;
+            }
         }
+        // Constant fields alone are common defaults, not numeric work.
+        candidate &= computed;
     } else if (type == ASTNodeType::NewExpression) {
         const auto& arguments = static_cast<NewExpressionNode*>(node)->arguments();
         candidate = arguments.size() <= 4;
@@ -471,13 +477,18 @@ static void findRefinedAllocationSites(Node* ast, const ByteCodeGenerateContext&
             }
         }
     } while (changed);
-    std::unordered_set<Node*> filledArrays;
+    std::unordered_set<Node*> filledArrays, modifiedArrays;
     for (const auto& binding : bindings) {
         for (Node* value : binding.second) {
             if (escaping.count(binding.first)) {
                 blocked.insert(value);
-            } else if (numericFilled.count(binding.first) && !otherFilled.count(binding.first)) {
-                filledArrays.insert(value);
+            } else {
+                if (numericFilled.count(binding.first) || otherFilled.count(binding.first)) {
+                    modifiedArrays.insert(value);
+                }
+                if (numericFilled.count(binding.first) && !otherFilled.count(binding.first)) {
+                    filledArrays.insert(value);
+                }
             }
         }
     }
@@ -485,10 +496,23 @@ static void findRefinedAllocationSites(Node* ast, const ByteCodeGenerateContext&
         if (blocked.count(node)) {
             continue;
         }
-        if (node->type() == ASTNodeType::ArrayExpression
-            && static_cast<ArrayExpressionNode*>(node)->elements().size() == 0
-            && !filledArrays.count(node)) {
-            continue;
+        if (node->type() == ASTNodeType::ArrayExpression) {
+            const auto& elements = static_cast<ArrayExpressionNode*>(node)->elements();
+            if (elements.size() == 0) {
+                if (!filledArrays.count(node)) {
+                    continue;
+                }
+            } else {
+                bool computed = false;
+                for (auto* item = elements.begin(); item != elements.end(); item = item->next()) {
+                    computed |= item->astNode()->type() != ASTNodeType::Literal;
+                }
+                // Unchanged constant tuples often encode control flow. Keep
+                // small initialized buffers which are filled locally.
+                if (!computed && !modifiedArrays.count(node)) {
+                    continue;
+                }
+            }
         }
         if (node->type() == ASTNodeType::NewExpression
             && static_cast<NewExpressionNode*>(node)->arguments().size() == 0
