@@ -16,6 +16,46 @@ spec.loader.exec_module(r)
 p, c = r.p, r.c
 
 
+def inactive_prefix_driver(text):
+    # Keep every suite closure alive and run the original preceding cases.
+    # Only extend the target's sampling; abort after its completed cycle.
+    needle = '\nsuite.run();\n'
+    assert text.count(needle) == 1 and 'suite.splice(' not in text
+    text = text.replace(needle,
+        "\nsuite.forEach(function(b){if(b.name==='prettier'){"
+        "b.minSamples=20;b.options.minSamples=20;}});\n"
+        "var completedPrefix=0;suite.on('cycle',function(){"
+        "if(++completedPrefix===14)suite.abort();});\nsuite.run();\n")
+    needle = 'if (suite.aborted) return;\n  const hz = gmean(suite.map(benchmark => benchmark.hz));'
+    assert text.count(needle) == 1
+    text = text.replace(needle,
+        'if (suite.aborted && completedPrefix !== 14) return;\n'
+        '  const hz = gmean(suite.filter(b=>b.stats.sample.length).map(benchmark => benchmark.hz));')
+    needle = 'score:hz, tests:suite.map('
+    assert text.count(needle) == 1
+    return text.replace(needle, 'score:hz, tests:suite.filter(b=>b.stats.sample.length).map(')
+
+
+def summarize_inactive_prefix(rows):
+    groups = {control: [x for x in rows if x['control'] == control]
+              for control in ['full_a', 'full_b', 'refined']}
+    result = {'diagnostic': True, 'higher_is_better': True,
+              'counts': {k: len(v) for k, v in groups.items()}, 'complete': False}
+    if not all(len(v) == 3 for v in groups.values()):
+        return result
+    scores = {k: [x['score'] for x in v] for k, v in groups.items()}
+    medians = {k: statistics.median(v) for k, v in scores.items()}
+    pct = lambda a, b: [(x / y - 1) * 100 for x, y in zip(scores[a], scores[b])]
+    versus_a, versus_b = pct('refined', 'full_a'), pct('refined', 'full_b')
+    result.update(complete=True, medians=medians,
+        full_b_vs_full_a_pct=pct('full_b', 'full_a'),
+        refined_vs_full_a_pct=versus_a, refined_vs_full_b_pct=versus_b,
+        median_change_vs_a_pct=(medians['refined'] / medians['full_a'] - 1) * 100,
+        median_change_vs_b_pct=(medians['refined'] / medians['full_b'] - 1) * 100,
+        losing_to_both_controls=sum(a < -2 and b < -2 for a, b in zip(versus_a, versus_b)))
+    return result
+
+
 def audit(contents, mode, require_active=True):
     result = p.policy_audit(contents, mode, require_active)
     audits = p.a.audits(contents)
@@ -33,6 +73,9 @@ def audit(contents, mode, require_active=True):
 def summarize(rows):
     result = {}
     for name in dict.fromkeys(x['name'] for x in rows):
+        if name == 'prettier_prefix':
+            result[name] = summarize_inactive_prefix([x for x in rows if x['name'] == name])
+            continue
         groups = {m: [x for x in rows if x['name'] == name and x['mode'] == m]
                   for m in ['full', 'refined']}
         if not all(groups.values()):
@@ -117,6 +160,16 @@ def main():
     if pairs == 5:
         data['protocol'] = ('Compiler/inactive-path follow-up: one fresh-process pair each of original workloads/order WTB18 with three samples (upstream uses20), and whole original-order Octane17; five alternating isolated CodeLoad pairs retaining all Octane preloads; two alternating fixed-work WTB18 pairs with exactly three calls per case; one existing allocation-pattern pair each at scale5. Fixed work includes cold compilation and is not the original timed-suite context. CodeLoad runs first and a repeated loss beyond2% stops expensive guards; stock one-pair guards, two fixed-work pairs and isolated cases do not replace the historical full-suite baseline. Same binary/default flags/FSD12/seed1; no perf/RSS sampler/cycle trace. Errors and unexpected fallback fail the run.')
 
+    if pairs == 1:
+        data['protocol'] = ('Inactive Prettier diagnosis: three rotated fresh-process blocks '
+            'of identical full-GC controls A/B and refined, nine processes per architecture. '
+            'Keep all WTB18 suite roots and original preceding execution order; earlier cases '
+            'retain three samples, Prettier uses twenty, then abort after its completed cycle. '
+            'Only Prettier is scored. A/B use identical executable, command, driver and environment. '
+            'Same binary/default flags/FSD12/seed1; no profiler/RSS sampler/cycle trace. '
+            'Reject hints, activation, minors, errors or fallback. This diagnostic is neither '
+            'an original full-suite result nor a replacement for the historical anchor.')
+
     def measure(name, directory, driver, mode, repeat, pattern=False):
         label = name + '-' + str(repeat) + '-' + mode
         try:
@@ -146,6 +199,43 @@ def main():
 
     save()
     try:
+        if pairs == 1:
+            _, directory, _ = next(x for x in stock if x[0] == 'web_tooling')
+            driver = report / 'prettier-prefix.js'
+            driver.write_text(inactive_prefix_driver(wtb.read_text()))
+            controls = ['full_a', 'refined', 'full_b']
+            for repeat in range(3):
+                for control in controls[repeat:] + controls[:repeat]:
+                    mode = 'refined' if control == 'refined' else 'full'
+                    label = 'prettier-prefix-' + str(repeat + 1) + '-' + control
+                    try:
+                        row, contents = c.process_measure(label, mode, commands[mode], directory,
+                            driver, envs[mode], report, cpu, monitor, False)
+                        parsed = json.loads(re.search(r'^WTB_SCORE_JSON (.*)$', contents, re.M)[1])
+                        tests = parsed['tests']
+                        assert len(tests) == 14 and tests[-1]['name'] == 'prettier'
+                        assert all(t['samples'] == len(t['sample_seconds']) ==
+                                   (20 if t['name'] == 'prettier' else 3) for t in tests)
+                        assert {t['name'] for t in tests} == r.WTB_NAMES - {
+                            'source-map', 'terser', 'typescript', 'uglify-js'}
+                        audits = p.a.audits(contents)
+                        assert audits['ALLOCATION_REFINED_AUDIT']['sites'] == 0
+                        assert audits['ALLOCATION_PATTERN_AUDIT']['hints'] == 0
+                        assert audits['ALLOCATION_PATTERN_AUDIT']['activations'] == 0
+                        assert audits['GENERATIONAL_AUDIT']['minor'] == 0
+                        target = tests[-1]
+                        assert target['hz'] > 0 and all(s > 0 for s in target['sample_seconds'])
+                        row.update(name='prettier_prefix', control=control, repeat=repeat + 1,
+                            status='passed', score=target['hz'], tests=tests, audits=audits)
+                        data['rows'].append(row)
+                        print('INACTIVE PREFIX RESULT', label, target['hz'], flush=True)
+                        save()
+                    except BaseException as error:
+                        data['failures'].append({'label': label, 'error': repr(error)})
+                        raise
+            data['status'] = 'passed'
+            print('INACTIVE PREFIX COMPLETE', arch, len(data['rows']), flush=True)
+            return
         if pairs != 3:
             _, directory, _ = next(x for x in stock if x[0] == 'octane')
             original = (directory / 'run.js').read_text()
