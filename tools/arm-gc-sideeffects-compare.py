@@ -38,15 +38,18 @@ def summarize(rows):
         if not all(groups.values()):
             continue
         pattern = 'benchmark' in groups['full'][0]
-        metric = lambda x: x['benchmark']['medianMs'] if pattern else x['score']
+        timed = pattern or name == 'fixed_work'
+        metric = lambda x: (x['benchmark']['medianMs'] if pattern else
+                            x['work_milliseconds'] if timed else x['score'])
         medians = {m: statistics.median(map(metric, group)) for m, group in groups.items()}
-        item = {'medians': medians, 'higher_is_better': not pattern,
+        item = {'medians': medians, 'higher_is_better': not timed,
                 'change_pct': (medians['refined'] / medians['full'] - 1) * 100,
                 'pairs': min(map(len, groups.values())), 'cases': {}}
         if not pattern:
             def cases(row):
                 return ({t['name']: t['hz'] for t in row['tests']}
-                        if name == 'web_tooling' else row['subtests'])
+                        if name == 'web_tooling' else row['test_milliseconds']
+                        if name == 'fixed_work' else row['subtests'])
             for case in cases(groups['full'][0]):
                 values = {m: [cases(x)[case] for x in g] for m, g in groups.items()}
                 change = (statistics.median(values['refined']) /
@@ -54,8 +57,9 @@ def summarize(rows):
                 paired = [(a / b - 1) * 100 for a, b in
                           zip(values['refined'], values['full'])]
                 item['cases'][case] = {'change_pct': change, 'paired_pct': paired,
-                    'repeated_loss': len(paired) == 3 and change < -2
-                                     and sum(x < -2 for x in paired) >= 2}
+                    'repeated_loss': len(paired) >= 3
+                    and (change > 2 if timed else change < -2)
+                    and sum(x > 2 if timed else x < -2 for x in paired) >= (len(paired) + 1) // 2}
         result[name] = item
     return result
 
@@ -67,7 +71,7 @@ def main():
     arch = os.environ['BENCHMARK_ARCHITECTURE']
     assert arch in ('arm32', 'arm64')
     pairs = int(os.environ['BENCHMARK_REPETITIONS'])
-    assert pairs in (1, 3)
+    assert pairs in (1, 2, 3)
     report = root / ('gc-sideeffects-' + arch)
     report.mkdir()
     binary = source.parent / ('build-' + arch) / 'escargot'
@@ -107,8 +111,11 @@ def main():
         data['summary'] = summarize(data['rows'])
         c.write_json(report / 'measurements.json', data)
 
-    if pairs == 1:
+    if pairs != 3:
         data['protocol'] = ('Focused follow-up: one fresh-process pair each of whole stock WTB18 and original-order Octane17; three alternating isolated CodeLoad pairs with every Octane preload retained; one cycle-traced original prefix through Splay, retaining all later suite roots; one pair per existing allocation workload at scale5. The one-pair stock guards and modified diagnostic contexts are not a new stable full-suite baseline. Same binary/default flags/FSD12/seed1; reject engine, checksum, parser and unexpected fallback errors.')
+
+    if pairs == 2:
+        data['protocol'] = ('Compiler/inactive-path follow-up: one fresh-process pair each of original workloads/order WTB18 with three samples (upstream uses20), and whole original-order Octane17; five alternating isolated CodeLoad pairs retaining all Octane preloads; two alternating fixed-work WTB18 pairs with exactly three calls per case; one existing allocation-pattern pair each at scale5. Fixed work includes cold compilation and is not the original timed-suite context. CodeLoad runs first and a repeated loss beyond2% stops expensive guards; stock one-pair guards, two fixed-work pairs and isolated cases do not replace the historical full-suite baseline. Same binary/default flags/FSD12/seed1; no perf/RSS sampler/cycle trace. Errors and unexpected fallback fail the run.')
 
     def measure(name, directory, driver, mode, repeat, pattern=False):
         label = name + '-' + str(repeat) + '-' + mode
@@ -139,9 +146,32 @@ def main():
 
     save()
     try:
+        if pairs != 3:
+            _, directory, _ = next(x for x in stock if x[0] == 'octane')
+            original = (directory / 'run.js').read_text()
+            needle = 'NotifyScore: PrintScore });'
+            assert original.count(needle) == 1
+            for name, skip in [
+                ('codeload', 'BenchmarkSuite.suites.filter(function(s){return s.name!=="CodeLoad";}).map(function(s){return s.name;})'),
+                ('splay_prefix', 'BenchmarkSuite.suites.slice(BenchmarkSuite.suites.map(function(s){return s.name;}).indexOf("Splay")+1).map(function(s){return s.name;})')]:
+                if pairs == 2 and name == 'splay_prefix':
+                    continue
+                driver = report / (name + '.js')
+                text = original.replace(needle, 'NotifyScore: PrintScore }, ' + skip + ');')
+                if name == 'splay_prefix':
+                    text = text.replace('BenchmarkSuite.RunSuites({ NotifyResult:', 'BenchmarkSuite.RunSuites({ NotifyStart: function(name){print("PHASE_START "+name);}, NotifyResult:')
+                driver.write_text(text)
+                for repeat in range((5 if pairs == 2 else 3) if name == 'codeload' else 1):
+                    for mode in (['full', 'refined'] if repeat % 2 == 0 else ['refined', 'full']):
+                        measure(name, directory, driver, mode, repeat + 1)
+        if pairs == 2 and data['summary']['codeload']['cases']['CodeLoad']['repeated_loss']:
+            data['status'] = 'rejected_early'
+            save()
+            print('Repeated CodeLoad loss; stopped expensive suite guards', flush=True)
+            return
         for name in ['web_tooling', 'octane']:
             _, directory, driver = next(x for x in stock if x[0] == name)
-            for repeat in range(pairs):
+            for repeat in range(3 if pairs == 3 else 1):
                 for mode in (['full', 'refined'] if repeat % 2 == 0 else ['refined', 'full']):
                     measure(name, directory, driver, mode, repeat + 1)
                 summary = data['summary'][name]
@@ -152,22 +182,11 @@ def main():
                         save()
                         print('Gross first-pair loss; stopped remaining measurements', flush=True)
                         return
-        if pairs == 1:
-            _, directory, _ = next(x for x in stock if x[0] == 'octane')
-            original = (directory / 'run.js').read_text()
-            needle = 'NotifyScore: PrintScore });'
-            assert original.count(needle) == 1
-            for name, skip in [
-                ('codeload', 'BenchmarkSuite.suites.filter(function(s){return s.name!=="CodeLoad";}).map(function(s){return s.name;})'),
-                ('splay_prefix', 'BenchmarkSuite.suites.slice(BenchmarkSuite.suites.map(function(s){return s.name;}).indexOf("Splay")+1).map(function(s){return s.name;})')]:
-                driver = report / (name + '.js')
-                text = original.replace(needle, 'NotifyScore: PrintScore }, ' + skip + ');')
-                if name == 'splay_prefix':
-                    text = text.replace('BenchmarkSuite.RunSuites({ NotifyResult:', 'BenchmarkSuite.RunSuites({ NotifyStart: function(name){print("PHASE_START "+name);}, NotifyResult:')
-                driver.write_text(text)
-                for repeat in range(3 if name == 'codeload' else 1):
-                    for mode in (['full', 'refined'] if repeat % 2 == 0 else ['refined', 'full']):
-                        measure(name, directory, driver, mode, repeat + 1)
+        if pairs == 2:
+            _, directory, driver = next(x for x in stock if x[0] == 'fixed_work')
+            for repeat in range(2):
+                for mode in (['full', 'refined'] if repeat % 2 == 0 else ['refined', 'full']):
+                    measure('fixed_work', directory, driver, mode, repeat + 1)
         for index, name in enumerate(p.a.NAMES):
             driver = report / (name + '.js')
             driver.write_text(p.a.driver_text(name))
