@@ -33,6 +33,9 @@ public:
     {
     }
 
+    Node* left() const { return m_left; }
+    Node* right() const { return m_right; }
+
     virtual ASTNodeType type() override { return ASTNodeType::BinaryExpressionPlus; }
     virtual void generateExpressionByteCode(ByteCodeBlock* codeBlock, ByteCodeGenerateContext* context, ByteCodeRegisterIndex dstRegister) override
     {

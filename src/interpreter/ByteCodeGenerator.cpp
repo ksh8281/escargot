@@ -256,11 +256,11 @@ const uint8_t byteCodeLengths[] = {
 };
 
 // This is a local syntactic filter, not a reachability or type proof. A return
-// alone is not evidence of long lifetime. Explicit heap/container stores and
-// constructor arguments are stronger evidence of graph construction.
-static bool allocationScalarHint(Optional<Node*> value, bool allowReferences)
+// alone is not evidence of long lifetime. Heap/container stores and values
+// passed to other functions carry stronger evidence of escape.
+static bool allocationScalarHint(Optional<Node*> value, bool allowReferences, unsigned depth = 4)
 {
-    if (!value) {
+    if (!value || depth == 0) {
         return false;
     }
     Node* node = value.value();
@@ -270,7 +270,13 @@ static bool allocationScalarHint(Optional<Node*> value, bool allowReferences)
     case ASTNodeType::Identifier:
     case ASTNodeType::MemberExpression:
         return allowReferences;
-    case ASTNodeType::BinaryExpressionPlus:
+    case ASTNodeType::BinaryExpressionPlus: {
+        // Unlike the other arithmetic operators, + may build strings.
+        // Bound recursive inspection so deeply nested source stays cheap.
+        auto* expression = static_cast<BinaryExpressionPlusNode*>(node);
+        return allocationScalarHint(expression->left(), false, depth - 1)
+            && allocationScalarHint(expression->right(), false, depth - 1);
+    }
     case ASTNodeType::BinaryExpressionMinus:
     case ASTNodeType::BinaryExpressionMultiply:
     case ASTNodeType::BinaryExpressionDivision:
@@ -411,6 +417,11 @@ static void findRefinedAllocationSites(Node* ast, const ByteCodeGenerateContext&
             }
         } else if (node->type() == ASTNodeType::CallExpression) {
             auto* call = static_cast<CallExpressionNode*>(node);
+            // Unknown callees can retain or mutate arguments. Treat these
+            // aliases like constructor arguments and explicit heap stores.
+            for (auto* arg = call->arguments().begin(); arg != call->arguments().end(); arg = arg->next()) {
+                stored(arg->astNode());
+            }
             if (!call->callee()->isMemberExpression()) {
                 continue;
             }
@@ -437,7 +448,6 @@ static void findRefinedAllocationSites(Node* ast, const ByteCodeGenerateContext&
             }
             bool scalar = call->arguments().size() != 0;
             for (auto* arg = call->arguments().begin(); arg != call->arguments().end(); arg = arg->next()) {
-                stored(arg->astNode());
                 scalar &= allocationScalarHint(arg->astNode(), false);
             }
             if ((method->equals("push") || method->equals("unshift")) && member->object()->isIdentifier()) {
