@@ -312,6 +312,25 @@ static bool allocationScalarHint(Optional<Node*> value, bool allowReferences, un
     }
 }
 
+// A signed numeric literal is still an initializer. In particular, defaults
+// such as -1 do not demonstrate repeated numeric computation.
+static bool allocationNumericLiteral(Node* node, unsigned depth = 4)
+{
+    if (node->type() == ASTNodeType::Literal) {
+        return static_cast<LiteralNode*>(node)->value().isNumber();
+    }
+    if (depth == 0) {
+        return false;
+    }
+    if (node->type() == ASTNodeType::UnaryExpressionMinus) {
+        return allocationNumericLiteral(static_cast<UnaryExpressionMinusNode*>(node)->argument(), depth - 1);
+    }
+    if (node->type() == ASTNodeType::UnaryExpressionPlus) {
+        return allocationNumericLiteral(static_cast<UnaryExpressionPlusNode*>(node)->argument(), depth - 1);
+    }
+    return false;
+}
+
 static bool allocationCandidateShape(Node* node, ASTNodeType type)
 {
     bool candidate = false;
@@ -333,7 +352,7 @@ static bool allocationCandidateShape(Node* node, ASTNodeType type)
             auto* property = item->astNode()->asProperty();
             candidate &= property->kind() == PropertyNode::Kind::Init && !property->computed()
                 && allocationScalarHint(property->value(), false);
-            if (candidate && property->value()->type() != ASTNodeType::Literal) {
+            if (candidate && !allocationNumericLiteral(property->value())) {
                 computed = true;
             }
         }
@@ -342,9 +361,14 @@ static bool allocationCandidateShape(Node* node, ASTNodeType type)
     } else if (type == ASTNodeType::NewExpression) {
         const auto& arguments = static_cast<NewExpressionNode*>(node)->arguments();
         candidate = arguments.size() <= 4;
+        bool computed = false;
         for (auto* arg = arguments.begin(); candidate && arg != arguments.end(); arg = arg->next()) {
             candidate &= allocationScalarHint(arg->astNode(), false);
+            computed |= !allocationNumericLiteral(arg->astNode());
         }
+        // Fixed constructor arguments also describe lookup tables and feature
+        // probes. Empty calls can still qualify through a numeric initializer.
+        candidate &= arguments.size() == 0 || computed;
     }
     return candidate;
 }
@@ -357,7 +381,9 @@ static void findRefinedAllocationSites(Node* ast, std::unordered_set<Node*>& sit
     // Bindings are consumed in one pass; grouping them by name adds no lookup.
     std::vector<std::pair<String*, Node*>> bindings;
     std::vector<std::pair<String*, String*>> aliases;
-    std::unordered_set<String*> escaping, numericFilled, otherFilled;
+    std::unordered_set<String*> escaping;
+    enum WriteHint : unsigned { NumericFill = 1, OtherFill = 2, IndexedFill = 4 };
+    std::unordered_map<String*, unsigned> writes;
     std::unordered_set<Node*> blocked, numericInitialized;
     auto name = [](Node* node) { return node->asIdentifier()->name().string(); };
     auto allocation = [](Node* node) {
@@ -407,7 +433,8 @@ static void findRefinedAllocationSites(Node* ast, std::unordered_set<Node*>& sit
                 stored(right);
                 auto* member = left->asMemberExpression();
                 if (!member->isPreComputedCase() && member->object()->isIdentifier()) {
-                    (allocationScalarHint(right, false) ? numericFilled : otherFilled).insert(name(member->object()));
+                    writes[name(member->object())] |= IndexedFill
+                        | (allocationScalarHint(right, false) ? NumericFill : OtherFill);
                 }
             } else if (type == ASTNodeType::AssignmentExpressionSimple) {
                 bind(left, right);
@@ -453,7 +480,7 @@ static void findRefinedAllocationSites(Node* ast, std::unordered_set<Node*>& sit
                 scalar &= allocationScalarHint(arg->astNode(), false);
             }
             if ((method->equals("push") || method->equals("unshift")) && member->object()->isIdentifier()) {
-                (scalar ? numericFilled : otherFilled).insert(name(member->object()));
+                writes[name(member->object())] |= scalar ? NumericFill : OtherFill;
             }
         } else if (type == ASTNodeType::Property) {
             auto* property = node->asProperty();
@@ -481,10 +508,15 @@ static void findRefinedAllocationSites(Node* ast, std::unordered_set<Node*>& sit
         if (escaping.count(binding.first)) {
             blocked.insert(binding.second);
         } else {
-            if (numericFilled.count(binding.first) || otherFilled.count(binding.first)) {
+            auto found = writes.find(binding.first);
+            if (found == writes.end()) {
+                continue;
+            }
+            unsigned hints = found->second;
+            if (hints & IndexedFill) {
                 modifiedArrays.insert(binding.second);
             }
-            if (numericFilled.count(binding.first) && !otherFilled.count(binding.first)) {
+            if ((hints & (NumericFill | OtherFill)) == NumericFill) {
                 filledArrays.insert(binding.second);
             }
         }
@@ -502,10 +534,10 @@ static void findRefinedAllocationSites(Node* ast, std::unordered_set<Node*>& sit
             } else {
                 bool computed = false;
                 for (auto* item = elements.begin(); item != elements.end(); item = item->next()) {
-                    computed |= item->astNode()->type() != ASTNodeType::Literal;
+                    computed |= !allocationNumericLiteral(item->astNode());
                 }
-                // Unchanged constant tuples often encode control flow. Keep
-                // small initialized buffers which are filled locally.
+                // Constant tuples and push/pop stacks often encode control flow.
+                // Keep initialized buffers with local indexed writes.
                 if (!computed && !modifiedArrays.count(node)) {
                     continue;
                 }

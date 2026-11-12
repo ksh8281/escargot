@@ -32,6 +32,8 @@ public:
     {
     }
 
+    Node* argument() { return m_argument; }
+
     virtual ASTNodeType type() override { return ASTNodeType::UnaryExpressionPlus; }
     virtual void generateExpressionByteCode(ByteCodeBlock* codeBlock, ByteCodeGenerateContext* context, ByteCodeRegisterIndex dstRegister) override
     {
