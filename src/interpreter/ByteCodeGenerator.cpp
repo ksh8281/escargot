@@ -351,24 +351,7 @@ static bool allocationCandidateShape(Node* node, ASTNodeType type)
 
 static void findRefinedAllocationSites(Node* ast, std::unordered_set<Node*>& sites)
 {
-    Node* scope = ast->type() == ASTNodeType::Function ? static_cast<FunctionNode*>(ast)->body() : ast;
-    std::vector<Node*> nodes, candidates;
-    scope->iterateChildren([&](Node* node) {
-        ASTNodeType type = node->type();
-        if (allocationCandidateShape(node, type)) {
-            candidates.push_back(node);
-        }
-        if ((type >= ASTNodeType::AssignmentExpression && type <= ASTNodeType::AssignmentExpressionSimple)
-            || type == ASTNodeType::VariableDeclaration
-            || type == ASTNodeType::NewExpression
-            || type == ASTNodeType::CallExpression
-            || type == ASTNodeType::Property) {
-            nodes.push_back(node);
-        }
-    });
-    if (candidates.empty()) {
-        return;
-    }
+    std::vector<Node*> candidates;
     // Identifier names are already canonical AtomicStrings. Reuse their
     // non-null identities instead of allocating UTF-8 copies for each use.
     std::unordered_map<String*, std::vector<Node*>> bindings;
@@ -403,14 +386,19 @@ static void findRefinedAllocationSites(Node* ast, std::unordered_set<Node*>& sit
             aliases.emplace_back(name(id), name(value.value()));
         }
     };
-    for (Node* node : nodes) {
-        if (node->type() == ASTNodeType::VariableDeclaration) {
+    Node* scope = ast->type() == ASTNodeType::Function ? static_cast<FunctionNode*>(ast)->body() : ast;
+    scope->iterateChildren([&](Node* node) {
+        ASTNodeType type = node->type();
+        if (allocationCandidateShape(node, type)) {
+            candidates.push_back(node);
+        }
+        if (type == ASTNodeType::VariableDeclaration) {
             const auto& declarations = node->asVariableDeclaration()->declarations();
             for (auto* item = declarations.begin(); item != declarations.end(); item = item->next()) {
                 auto* declaration = item->astNode()->asVariableDeclarator();
                 bind(declaration->id(), declaration->init());
             }
-        } else if (node->isAssignmentOperation()) {
+        } else if (type >= ASTNodeType::AssignmentExpression && type <= ASTNodeType::AssignmentExpressionSimple) {
             auto* assignment = static_cast<AssignmentExpressionNode*>(node);
             Node* left = assignment->left();
             Node* right = assignment->right();
@@ -420,15 +408,15 @@ static void findRefinedAllocationSites(Node* ast, std::unordered_set<Node*>& sit
                 if (!member->isPreComputedCase() && member->object()->isIdentifier()) {
                     (allocationScalarHint(right, false) ? numericFilled : otherFilled).insert(name(member->object()));
                 }
-            } else if (node->isAssignmentExpressionSimple()) {
+            } else if (type == ASTNodeType::AssignmentExpressionSimple) {
                 bind(left, right);
             }
-        } else if (node->type() == ASTNodeType::NewExpression) {
+        } else if (type == ASTNodeType::NewExpression) {
             auto* creation = static_cast<NewExpressionNode*>(node);
             for (auto* arg = creation->arguments().begin(); arg != creation->arguments().end(); arg = arg->next()) {
                 stored(arg->astNode());
             }
-        } else if (node->type() == ASTNodeType::CallExpression) {
+        } else if (type == ASTNodeType::CallExpression) {
             auto* call = static_cast<CallExpressionNode*>(node);
             // Unknown callees can retain or mutate arguments. Treat these
             // aliases like constructor arguments and explicit heap stores.
@@ -436,7 +424,7 @@ static void findRefinedAllocationSites(Node* ast, std::unordered_set<Node*>& sit
                 stored(arg->astNode());
             }
             if (!call->callee()->isMemberExpression()) {
-                continue;
+                return;
             }
             auto* member = call->callee()->asMemberExpression();
             // An empty constructor argument list carries no scalar evidence.
@@ -453,11 +441,11 @@ static void findRefinedAllocationSites(Node* ast, std::unordered_set<Node*>& sit
                 }
             }
             if (!member->isPreComputedCase()) {
-                continue;
+                return;
             }
             auto* method = member->propertyName().string();
             if (!method->equals("push") && !method->equals("unshift") && !method->equals("set") && !method->equals("add")) {
-                continue;
+                return;
             }
             bool scalar = call->arguments().size() != 0;
             for (auto* arg = call->arguments().begin(); arg != call->arguments().end(); arg = arg->next()) {
@@ -466,12 +454,15 @@ static void findRefinedAllocationSites(Node* ast, std::unordered_set<Node*>& sit
             if ((method->equals("push") || method->equals("unshift")) && member->object()->isIdentifier()) {
                 (scalar ? numericFilled : otherFilled).insert(name(member->object()));
             }
-        } else if (node->type() == ASTNodeType::Property) {
+        } else if (type == ASTNodeType::Property) {
             auto* property = node->asProperty();
             if (property->kind() == PropertyNode::Kind::Init) {
                 stored(property->value());
             }
         }
+    });
+    if (candidates.empty()) {
+        return;
     }
     // Alias propagation is bounded by the number of local names, without
     // looking through nested function bodies or treating an address as a root.
