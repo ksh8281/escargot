@@ -71,7 +71,7 @@ def main():
     arch = os.environ['BENCHMARK_ARCHITECTURE']
     assert arch in ('arm32', 'arm64')
     pairs = int(os.environ['BENCHMARK_REPETITIONS'])
-    assert pairs in (1, 2, 3)
+    assert pairs in (1, 3, 5)
     report = root / ('gc-sideeffects-' + arch)
     report.mkdir()
     binary = source.parent / ('build-' + arch) / 'escargot'
@@ -114,7 +114,7 @@ def main():
     if pairs != 3:
         data['protocol'] = ('Focused follow-up: one fresh-process pair each of whole stock WTB18 and original-order Octane17; three alternating isolated CodeLoad pairs with every Octane preload retained; one cycle-traced original prefix through Splay, retaining all later suite roots; one pair per existing allocation workload at scale5. The one-pair stock guards and modified diagnostic contexts are not a new stable full-suite baseline. Same binary/default flags/FSD12/seed1; reject engine, checksum, parser and unexpected fallback errors.')
 
-    if pairs == 2:
+    if pairs == 5:
         data['protocol'] = ('Compiler/inactive-path follow-up: one fresh-process pair each of original workloads/order WTB18 with three samples (upstream uses20), and whole original-order Octane17; five alternating isolated CodeLoad pairs retaining all Octane preloads; two alternating fixed-work WTB18 pairs with exactly three calls per case; one existing allocation-pattern pair each at scale5. Fixed work includes cold compilation and is not the original timed-suite context. CodeLoad runs first and a repeated loss beyond2% stops expensive guards; stock one-pair guards, two fixed-work pairs and isolated cases do not replace the historical full-suite baseline. Same binary/default flags/FSD12/seed1; no perf/RSS sampler/cycle trace. Errors and unexpected fallback fail the run.')
 
     def measure(name, directory, driver, mode, repeat, pattern=False):
@@ -154,17 +154,17 @@ def main():
             for name, skip in [
                 ('codeload', 'BenchmarkSuite.suites.filter(function(s){return s.name!=="CodeLoad";}).map(function(s){return s.name;})'),
                 ('splay_prefix', 'BenchmarkSuite.suites.slice(BenchmarkSuite.suites.map(function(s){return s.name;}).indexOf("Splay")+1).map(function(s){return s.name;})')]:
-                if pairs == 2 and name == 'splay_prefix':
+                if pairs == 5 and name == 'splay_prefix':
                     continue
                 driver = report / (name + '.js')
                 text = original.replace(needle, 'NotifyScore: PrintScore }, ' + skip + ');')
                 if name == 'splay_prefix':
                     text = text.replace('BenchmarkSuite.RunSuites({ NotifyResult:', 'BenchmarkSuite.RunSuites({ NotifyStart: function(name){print("PHASE_START "+name);}, NotifyResult:')
                 driver.write_text(text)
-                for repeat in range((5 if pairs == 2 else 3) if name == 'codeload' else 1):
+                for repeat in range((5 if pairs == 5 else 3) if name == 'codeload' else 1):
                     for mode in (['full', 'refined'] if repeat % 2 == 0 else ['refined', 'full']):
                         measure(name, directory, driver, mode, repeat + 1)
-        if pairs == 2 and data['summary']['codeload']['cases']['CodeLoad']['repeated_loss']:
+        if pairs == 5 and data['summary']['codeload']['cases']['CodeLoad']['repeated_loss']:
             data['status'] = 'rejected_early'
             save()
             print('Repeated CodeLoad loss; stopped expensive suite guards', flush=True)
@@ -182,7 +182,7 @@ def main():
                         save()
                         print('Gross first-pair loss; stopped remaining measurements', flush=True)
                         return
-        if pairs == 2:
+        if pairs == 5:
             _, directory, driver = next(x for x in stock if x[0] == 'fixed_work')
             for repeat in range(2):
                 for mode in (['full', 'refined'] if repeat % 2 == 0 else ['refined', 'full']):
