@@ -36,12 +36,12 @@ def inactive_prefix_driver(text, target="prettier", count=14):
     return text.replace(needle, 'score:hz, tests:suite.filter(b=>b.stats.sample.length).map(')
 
 
-def summarize_inactive_prefix(rows):
+def summarize_inactive_prefix(rows, blocks=3):
     groups = {control: [x for x in rows if x['control'] == control]
               for control in ['full_a', 'full_b', 'refined']}
     result = {'diagnostic': True, 'higher_is_better': True,
               'counts': {k: len(v) for k, v in groups.items()}, 'complete': False}
-    if not all(len(v) == 3 for v in groups.values()):
+    if not all(len(v) == blocks for v in groups.values()):
         return result
     scores = {k: [x['score'] for x in v] for k, v in groups.items()}
     medians = {k: statistics.median(v) for k, v in scores.items()}
@@ -54,6 +54,33 @@ def summarize_inactive_prefix(rows):
         median_change_vs_b_pct=(medians['refined'] / medians['full_b'] - 1) * 100,
         losing_to_both_controls=sum(a < -2 and b < -2 for a, b in zip(versus_a, versus_b)))
     return result
+
+
+FOLLOWUP_CASES = ('acorn', 'lebab', 'prepack')
+
+
+def summarize_followup(rows):
+    blocks = max((x['repeat'] for x in rows), default=1)
+    cases = {}
+    for name in FOLLOWUP_CASES:
+        projected = [dict(x, score=next(t['hz'] for t in x['tests']
+                                       if t['name'] == name)) for x in rows]
+        item = summarize_inactive_prefix(projected, blocks)
+        item['repeated_loss'] = (blocks == 3 and item['complete']
+            and item['median_change_vs_a_pct'] < -2
+            and item['median_change_vs_b_pct'] < -2
+            and item['losing_to_both_controls'] >= 2)
+        cases[name] = item
+    return {'diagnostic': True, 'completed_blocks': len(rows) // 3,
+            'cases': cases}
+
+
+def followup_needs_more(summary):
+    blocks = summary['completed_blocks']
+    # Escalate only a loss to both controls repeated in every completed block.
+    # Early stopping screens for a reproducible loss; it cannot certify absence.
+    return blocks < 3 and any(x['complete'] and
+        x['losing_to_both_controls'] == blocks for x in summary['cases'].values())
 
 
 def audit(contents, mode, require_active=True):
@@ -73,6 +100,9 @@ def audit(contents, mode, require_active=True):
 def summarize(rows):
     result = {}
     for name in dict.fromkeys(x['name'] for x in rows):
+        if name == 'remaining_prefix':
+            result[name] = summarize_followup([x for x in rows if x['name'] == name])
+            continue
         if name == 'esprima_prefix':
             result[name] = summarize_inactive_prefix([x for x in rows if x['name'] == name])
             continue
@@ -168,16 +198,17 @@ def main():
             'because the runtime is unchanged from the completed48 checkpoint.')
 
     if pairs == 1:
-        data['protocol'] = ('Inactive Esprima diagnosis: three rotated fresh-process blocks '
-            'of identical full-GC controls A/B and refined, nine processes per architecture. '
-            'Keep all WTB18 suite roots and original preceding execution order; earlier cases '
-            'and Esprima all use twenty samples, then abort after its completed cycle. '
-            'Only Esprima is scored. A/B use identical executable, command, driver and environment. '
-            'Same binary/default flags/FSD12/seed1; no profiler/RSS sampler/cycle trace. '
-            'Reject hints, activation, minors, errors or fallback. This diagnostic is neither '
-            'an original full-suite result nor a replacement for the historical anchor. '
-            'A separate full/refined pair then records target collection phases; '
-            'instrumented timings are excluded from the control summary.')
+        data['protocol'] = ('Adaptive inactive-policy follow-up for Acorn, Lebab and Prepack. '
+            'Keep all eighteen WTB suite roots and execute the original first thirteen '
+            'workloads with all twenty upstream samples; abort after Prepack. '
+            'First block: identical full-GC controls A, refined, B. Repeat in rotated '
+            'order only if at least one target loses more than 2% to both controls '
+            'in every completed block, up to three blocks. This is a predefined '
+            'screen for reproducible loss, not a statistical absence-of-regression test. '
+            'A/B use identical executable, command, driver and environment. '
+            'Same binary/default flags/FSD12/seed1; no profiler, RSS sampler or cycle '
+            'trace. Reject sites, hints, activation, minors, errors or fallback. '
+            'Report complete per-block results and the stop reason. No baseline promotion.')
 
     def measure(name, directory, driver, mode, repeat, pattern=False):
         label = name + '-' + str(repeat) + '-' + mode
@@ -215,74 +246,45 @@ def main():
     try:
         if pairs == 1:
             _, directory, _ = next(x for x in stock if x[0] == 'web_tooling')
-            driver = report / 'esprima-prefix.js'
-            driver.write_text(inactive_prefix_driver(wtb.read_text(), target="esprima", count=9))
+            driver = report / 'remaining-prefix.js'
+            driver.write_text(inactive_prefix_driver(wtb.read_text(), target="prepack", count=13))
             controls = ['full_a', 'refined', 'full_b']
             for repeat in range(3):
                 for control in controls[repeat:] + controls[:repeat]:
                     mode = 'refined' if control == 'refined' else 'full'
-                    label = 'esprima-prefix-' + str(repeat + 1) + '-' + control
+                    label = 'remaining-prefix-' + str(repeat + 1) + '-' + control
                     try:
                         row, contents = c.process_measure(label, mode, commands[mode], directory,
                             driver, envs[mode], report, cpu, monitor, False)
                         parsed = json.loads(re.search(r'^WTB_SCORE_JSON (.*)$', contents, re.M)[1])
                         tests = parsed['tests']
-                        assert len(tests) == 9 and tests[-1]['name'] == 'esprima'
-                        assert all(t['samples'] == len(t['sample_seconds']) ==
-                                   20 for t in tests)
+                        assert len(tests) == 13 and tests[-1]['name'] == 'prepack'
+                        assert all(t['hz'] > 0 and t['samples'] == len(t['sample_seconds']) == 20
+                                   and all(s > 0 for s in t['sample_seconds']) for t in tests)
                         assert {t['name'] for t in tests} == r.WTB_NAMES - {
-                            'jshint', 'lebab', 'postcss', 'prepack', 'prettier',
-                            'source-map', 'terser', 'typescript', 'uglify-js'}
+                            'prettier', 'source-map', 'terser', 'typescript', 'uglify-js'}
                         audits = p.a.audits(contents)
                         assert audits['ALLOCATION_REFINED_AUDIT']['sites'] == 0
                         assert audits['ALLOCATION_PATTERN_AUDIT']['hints'] == 0
                         assert audits['ALLOCATION_PATTERN_AUDIT']['activations'] == 0
                         assert audits['GENERATIONAL_AUDIT']['minor'] == 0
-                        target = tests[-1]
-                        assert target['hz'] > 0 and all(s > 0 for s in target['sample_seconds'])
-                        row.update(name='esprima_prefix', control=control, repeat=repeat + 1,
-                            status='passed', score=target['hz'], tests=tests, audits=audits)
+                        row.update(name='remaining_prefix', control=control, repeat=repeat + 1,
+                            status='passed', tests=tests, audits=audits)
                         data['rows'].append(row)
-                        print('INACTIVE PREFIX RESULT', label, target['hz'], flush=True)
+                        print('FOLLOW-UP RESULT', label,
+                              {t['name']: t['hz'] for t in tests if t['name'] in FOLLOWUP_CASES},
+                              flush=True)
                         save()
                     except BaseException as error:
                         data['failures'].append({'label': label, 'error': repr(error)})
                         raise
-            # Traces diagnose collection phases without entering timing results.
-            traced = report / 'esprima-prefix-traced.js'
-            marker = '\nsuite.run();\n'
-            text = driver.read_text()
-            assert text.count(marker) == 1
-            traced.write_text(text.replace(marker,
-                "\nvar targetStarted=false;suite.forEach(function(b){if(b.name==='esprima')"
-                "b.on('start',function(){if(!targetStarted){targetStarted=true;"
-                "print('PROFILE_TARGET_START');}});});"
-                "suite.on('cycle',function(e){if(e.target.name==='esprima')"
-                "print('PROFILE_TARGET_END');});\nsuite.run();\n"))
-            data['diagnostics'] = []
-            for mode in ['full', 'refined']:
-                row, contents = c.process_measure('esprima-traced-' + mode, mode,
-                    commands[mode], directory, traced,
-                    {**envs[mode], 'ESCARGOT_GC_CYCLE_TRACE': '1'},
-                    report, cpu, monitor, False)
-                assert contents.count('PROFILE_TARGET_START') == 1
-                assert contents.count('PROFILE_TARGET_END') == 1
-                section = contents.split('PROFILE_TARGET_START', 1)[1].split('PROFILE_TARGET_END', 1)[0]
-                marks = [json.loads(x) for x in re.findall(r'^GC_CYCLE_MARK (.*)$', section, re.M)]
-                reclaims = [json.loads(x) for x in re.findall(r'^GC_CYCLE_RECLAIM (.*)$', section, re.M)]
-                assert marks and len(marks) == len(reclaims)
-                assert all(x['full'] and not x['abandoned'] for x in marks)
-                parsed = json.loads(re.search(r'^WTB_SCORE_JSON (.*)$', contents, re.M)[1])
-                assert len(parsed['tests']) == 9 and parsed['tests'][-1]['name'] == 'esprima'
-                assert all(t['samples'] == len(t['sample_seconds']) == 20 for t in parsed['tests'])
-                row.update(diagnostic=True, marks=marks, reclaims=reclaims,
-                    target=parsed['tests'][-1], audits=p.a.audits(contents))
-                assert row['audits']['ALLOCATION_PATTERN_AUDIT']['activations'] == 0
-                assert row['audits']['GENERATIONAL_AUDIT']['minor'] == 0
-                data['diagnostics'].append(row)
-                save()
+                summary = data['summary']['remaining_prefix']
+                if not followup_needs_more(summary):
+                    data['stop_reason'] = ('three_block_limit' if repeat == 2 else
+                        'no_target_lost_to_both_controls_in_every_completed_block')
+                    break
             data['status'] = 'passed'
-            print('INACTIVE PREFIX COMPLETE', arch, len(data['rows']), flush=True)
+            print('FOLLOW-UP COMPLETE', arch, len(data['rows']), data['stop_reason'], flush=True)
             return
         for name in (['web_tooling'] if pairs == 5 else ['web_tooling', 'octane']):
             _, directory, driver = next(x for x in stock if x[0] == name)
