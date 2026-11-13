@@ -380,7 +380,8 @@ static void findRefinedAllocationSites(Node* ast, std::unordered_set<Node*>& sit
     // non-null identities instead of allocating UTF-8 copies for each use.
     // Bindings are consumed in one pass; grouping them by name adds no lookup.
     std::vector<std::pair<String*, Node*>> bindings;
-    std::vector<std::pair<String*, String*>> aliases;
+    using Alias = std::pair<String*, String*>;
+    std::vector<Alias> aliases;
     std::unordered_set<String*> escaping;
     enum WriteHint : unsigned { NumericFill = 1, OtherFill = 2, IndexedFill = 4 };
     std::unordered_map<String*, unsigned> writes;
@@ -492,17 +493,44 @@ static void findRefinedAllocationSites(Node* ast, std::unordered_set<Node*>& sit
     if (candidates.empty()) {
         return;
     }
-    // Alias propagation is bounded by the number of local names, without
-    // looking through nested function bodies or treating an address as a root.
-    bool changed;
-    do {
-        changed = false;
+    // Resolve declaration-order aliases with one scan. Build an index only
+    // when an escaping name still has an unresolved reverse dependency.
+    // Repeated whole-list scans make long reverse chains quadratic.
+    if (!aliases.empty() && !escaping.empty()) {
+        bool changed = false;
         for (const auto& alias : aliases) {
             if (escaping.count(alias.first)) {
                 changed |= escaping.insert(alias.second).second;
             }
         }
-    } while (changed);
+        bool unresolved = changed && std::any_of(aliases.begin(), aliases.end(),
+            [&](const Alias& alias) {
+                return escaping.count(alias.first) && !escaping.count(alias.second);
+            });
+        if (unresolved) {
+            // Sort the existing edges instead of allocating a graph index.
+            auto before = std::less<String*>();
+            std::sort(aliases.begin(), aliases.end(), [&](const Alias& a, const Alias& b) {
+                return before(a.first, b.first);
+            });
+            std::vector<String*> pending;
+            for (const auto& alias : aliases) {
+                if (escaping.count(alias.first) && escaping.insert(alias.second).second) {
+                    pending.push_back(alias.second);
+                }
+            }
+            for (size_t i = 0; i < pending.size(); ++i) {
+                String* escapedName = pending[i];
+                auto first = std::lower_bound(aliases.begin(), aliases.end(), escapedName,
+                    [&](const Alias& alias, String* key) { return before(alias.first, key); });
+                for (; first != aliases.end() && first->first == escapedName; ++first) {
+                    if (escaping.insert(first->second).second) {
+                        pending.push_back(first->second);
+                    }
+                }
+            }
+        }
+    }
     std::unordered_set<Node*> filledArrays, modifiedArrays;
     for (const auto& binding : bindings) {
         if (escaping.count(binding.first)) {
