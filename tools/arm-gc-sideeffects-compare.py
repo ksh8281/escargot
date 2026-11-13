@@ -16,20 +16,20 @@ spec.loader.exec_module(r)
 p, c = r.p, r.c
 
 
-def inactive_prefix_driver(text):
+def inactive_prefix_driver(text, target="prettier", count=14):
     # Keep every suite closure alive and run the original preceding cases.
     # Only extend the target's sampling; abort after its completed cycle.
     needle = '\nsuite.run();\n'
     assert text.count(needle) == 1 and 'suite.splice(' not in text
     text = text.replace(needle,
-        "\nsuite.forEach(function(b){if(b.name==='prettier'){"
+        f"\nsuite.forEach(function(b){{if(b.name==={json.dumps(target)}){{"
         "b.minSamples=20;b.options.minSamples=20;}});\n"
         "var completedPrefix=0;suite.on('cycle',function(){"
-        "if(++completedPrefix===14)suite.abort();});\nsuite.run();\n")
+        f"if(++completedPrefix==={count})suite.abort();}});\nsuite.run();\n")
     needle = 'if (suite.aborted) return;\n  const hz = gmean(suite.map(benchmark => benchmark.hz));'
     assert text.count(needle) == 1
     text = text.replace(needle,
-        'if (suite.aborted && completedPrefix !== 14) return;\n'
+        f'if (suite.aborted && completedPrefix !== {count}) return;\n'
         '  const hz = gmean(suite.filter(b=>b.stats.sample.length).map(benchmark => benchmark.hz));')
     needle = 'score:hz, tests:suite.map('
     assert text.count(needle) == 1
@@ -73,7 +73,7 @@ def audit(contents, mode, require_active=True):
 def summarize(rows):
     result = {}
     for name in dict.fromkeys(x['name'] for x in rows):
-        if name == 'prettier_prefix':
+        if name == 'esprima_prefix':
             result[name] = summarize_inactive_prefix([x for x in rows if x['name'] == name])
             continue
         groups = {m: [x for x in rows if x['name'] == name and x['mode'] == m]
@@ -140,7 +140,7 @@ def main():
     wtb = report / 'wtb-score.js'
     text = wtb.read_text().replace('count:b.count}', 'count:b.count,sample_seconds:b.stats.sample}')
     assert 'sample_seconds' in text
-    if pairs == 5:
+    if pairs in (1, 5):
         assert text.count('minSamples: 3') == 1
         text = text.replace('minSamples: 3', 'minSamples: 20')
     wtb.write_text(text)
@@ -168,14 +168,16 @@ def main():
             'because the runtime is unchanged from the completed48 checkpoint.')
 
     if pairs == 1:
-        data['protocol'] = ('Inactive Prettier diagnosis: three rotated fresh-process blocks '
+        data['protocol'] = ('Inactive Esprima diagnosis: three rotated fresh-process blocks '
             'of identical full-GC controls A/B and refined, nine processes per architecture. '
             'Keep all WTB18 suite roots and original preceding execution order; earlier cases '
-            'retain three samples, Prettier uses twenty, then abort after its completed cycle. '
-            'Only Prettier is scored. A/B use identical executable, command, driver and environment. '
+            'and Esprima all use twenty samples, then abort after its completed cycle. '
+            'Only Esprima is scored. A/B use identical executable, command, driver and environment. '
             'Same binary/default flags/FSD12/seed1; no profiler/RSS sampler/cycle trace. '
             'Reject hints, activation, minors, errors or fallback. This diagnostic is neither '
-            'an original full-suite result nor a replacement for the historical anchor.')
+            'an original full-suite result nor a replacement for the historical anchor. '
+            'A separate full/refined pair then records target collection phases; '
+            'instrumented timings are excluded from the control summary.')
 
     def measure(name, directory, driver, mode, repeat, pattern=False):
         label = name + '-' + str(repeat) + '-' + mode
@@ -213,22 +215,23 @@ def main():
     try:
         if pairs == 1:
             _, directory, _ = next(x for x in stock if x[0] == 'web_tooling')
-            driver = report / 'prettier-prefix.js'
-            driver.write_text(inactive_prefix_driver(wtb.read_text()))
+            driver = report / 'esprima-prefix.js'
+            driver.write_text(inactive_prefix_driver(wtb.read_text(), target="esprima", count=9))
             controls = ['full_a', 'refined', 'full_b']
             for repeat in range(3):
                 for control in controls[repeat:] + controls[:repeat]:
                     mode = 'refined' if control == 'refined' else 'full'
-                    label = 'prettier-prefix-' + str(repeat + 1) + '-' + control
+                    label = 'esprima-prefix-' + str(repeat + 1) + '-' + control
                     try:
                         row, contents = c.process_measure(label, mode, commands[mode], directory,
                             driver, envs[mode], report, cpu, monitor, False)
                         parsed = json.loads(re.search(r'^WTB_SCORE_JSON (.*)$', contents, re.M)[1])
                         tests = parsed['tests']
-                        assert len(tests) == 14 and tests[-1]['name'] == 'prettier'
+                        assert len(tests) == 9 and tests[-1]['name'] == 'esprima'
                         assert all(t['samples'] == len(t['sample_seconds']) ==
-                                   (20 if t['name'] == 'prettier' else 3) for t in tests)
+                                   20 for t in tests)
                         assert {t['name'] for t in tests} == r.WTB_NAMES - {
+                            'jshint', 'lebab', 'postcss', 'prepack', 'prettier',
                             'source-map', 'terser', 'typescript', 'uglify-js'}
                         audits = p.a.audits(contents)
                         assert audits['ALLOCATION_REFINED_AUDIT']['sites'] == 0
@@ -237,7 +240,7 @@ def main():
                         assert audits['GENERATIONAL_AUDIT']['minor'] == 0
                         target = tests[-1]
                         assert target['hz'] > 0 and all(s > 0 for s in target['sample_seconds'])
-                        row.update(name='prettier_prefix', control=control, repeat=repeat + 1,
+                        row.update(name='esprima_prefix', control=control, repeat=repeat + 1,
                             status='passed', score=target['hz'], tests=tests, audits=audits)
                         data['rows'].append(row)
                         print('INACTIVE PREFIX RESULT', label, target['hz'], flush=True)
@@ -245,6 +248,39 @@ def main():
                     except BaseException as error:
                         data['failures'].append({'label': label, 'error': repr(error)})
                         raise
+            # Traces diagnose collection phases without entering timing results.
+            traced = report / 'esprima-prefix-traced.js'
+            marker = '\nsuite.run();\n'
+            text = driver.read_text()
+            assert text.count(marker) == 1
+            traced.write_text(text.replace(marker,
+                "\nvar targetStarted=false;suite.forEach(function(b){if(b.name==='esprima')"
+                "b.on('start',function(){if(!targetStarted){targetStarted=true;"
+                "print('PROFILE_TARGET_START');}});});"
+                "suite.on('cycle',function(e){if(e.target.name==='esprima')"
+                "print('PROFILE_TARGET_END');});\nsuite.run();\n"))
+            data['diagnostics'] = []
+            for mode in ['full', 'refined']:
+                row, contents = c.process_measure('esprima-traced-' + mode, mode,
+                    commands[mode], directory, traced,
+                    {**envs[mode], 'ESCARGOT_GC_CYCLE_TRACE': '1'},
+                    report, cpu, monitor, False)
+                assert contents.count('PROFILE_TARGET_START') == 1
+                assert contents.count('PROFILE_TARGET_END') == 1
+                section = contents.split('PROFILE_TARGET_START', 1)[1].split('PROFILE_TARGET_END', 1)[0]
+                marks = [json.loads(x) for x in re.findall(r'^GC_CYCLE_MARK (.*)$', section, re.M)]
+                reclaims = [json.loads(x) for x in re.findall(r'^GC_CYCLE_RECLAIM (.*)$', section, re.M)]
+                assert marks and len(marks) == len(reclaims)
+                assert all(x['full'] and not x['abandoned'] for x in marks)
+                parsed = json.loads(re.search(r'^WTB_SCORE_JSON (.*)$', contents, re.M)[1])
+                assert len(parsed['tests']) == 9 and parsed['tests'][-1]['name'] == 'esprima'
+                assert all(t['samples'] == len(t['sample_seconds']) == 20 for t in parsed['tests'])
+                row.update(diagnostic=True, marks=marks, reclaims=reclaims,
+                    target=parsed['tests'][-1], audits=p.a.audits(contents))
+                assert row['audits']['ALLOCATION_PATTERN_AUDIT']['activations'] == 0
+                assert row['audits']['GENERATIONAL_AUDIT']['minor'] == 0
+                data['diagnostics'].append(row)
+                save()
             data['status'] = 'passed'
             print('INACTIVE PREFIX COMPLETE', arch, len(data['rows']), flush=True)
             return
