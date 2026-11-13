@@ -111,12 +111,14 @@ def summarize(rows):
         if not all(groups.values()):
             continue
         pattern = 'benchmark' in groups['full'][0]
-        timed = pattern or name == 'fixed_work'
+        timed = pattern or name in ('fixed_work', 'sunspider')
         metric = lambda x: (x['benchmark']['medianMs'] if pattern else
-                            x['work_milliseconds'] if timed else x['score'])
+                            x['work_milliseconds'] if name == 'fixed_work' else
+                            x['total_milliseconds'] if name == 'sunspider' else x['score'])
         medians = {m: statistics.median(map(metric, group)) for m, group in groups.items()}
         item = {'medians': medians, 'higher_is_better': not timed,
-                'change_pct': (medians['refined'] / medians['full'] - 1) * 100,
+                'change_pct': ((medians['refined'] / medians['full'] - 1) * 100
+                               if medians['full'] else None),
                 'pairs': min(map(len, groups.values())), 'cases': {}}
         if not pattern:
             def cases(row):
@@ -125,12 +127,15 @@ def summarize(rows):
                         if name == 'fixed_work' else row['subtests'])
             for case in cases(groups['full'][0]):
                 values = {m: [cases(x)[case] for x in g] for m, g in groups.items()}
-                change = (statistics.median(values['refined']) /
-                          statistics.median(values['full']) - 1) * 100
-                paired = [(a / b - 1) * 100 for a, b in
+                # A millisecond timer can report zero for a small case.
+                # Keep the raw values and mark its percentage unavailable.
+                before = statistics.median(values['full'])
+                change = (statistics.median(values['refined']) / before - 1) * 100 if before else None
+                paired = [(a / b - 1) * 100 if b else None for a, b in
                           zip(values['refined'], values['full'])]
                 item['cases'][case] = {'change_pct': change, 'paired_pct': paired,
-                    'repeated_loss': len(paired) >= 3
+                    'repeated_loss': len(paired) >= 3 and change is not None
+                    and all(x is not None for x in paired)
                     and (change > 2 if timed else change < -2)
                     and sum(x > 2 if timed else x < -2 for x in paired) >= (len(paired) + 1) // 2}
         result[name] = item
@@ -188,14 +193,16 @@ def main():
         c.write_json(report / 'measurements.json', data)
 
     if pairs == 5:
-        data['protocol'] = ('Full original-sampling WTB confirmation: one fresh-process full/refined pair '
-            'per architecture, opposite order on ARM32/ARM64, all eighteen workloads in original order '
-            'and all twenty upstream samples per workload. Same binary/default flags/FSD12/seed1; '
-            'no profiler, RSS sampler or cycle trace. Process peak RSS retained. '
-            'Engine/checksum/parser/fallback errors fail the run; a gross first-pair loss is '
-            'reported as rejected. A single process pair does not replace the historical full anchor or '
-            'establish the previous three-pair repeated-loss criterion. Octane and pattern guards are omitted '
-            'because the runtime is unchanged from the completed48 checkpoint.')
+        data['protocol'] = ('Complete full-GC versus latest-research comparison: one fresh-process '
+            'pair for original WTB18 with twenty upstream samples, original-order Octane17, '
+            'SunSpider26, fixed-work WTB18 with three calls per workload, and all six allocation '
+            'patterns at scale5/warmup1/samples3. Same binary/default flags/FSD12/seed1. '
+            'Reverse each workload order across ARM32/ARM64; alternate suite order within each '
+            'architecture. No profiler, RSS sampler or cycle trace. Retain process-peak RSS; '
+            'fixed-work RSS is the primary memory comparison. Do not stop for score losses. '
+            'Record individual failures and continue the remaining workloads, then fail the run '
+            'if any execution failed. A single pair does not establish repeated losses or gains '
+            'and does not automatically replace the historical baseline.')
 
     if pairs == 1:
         data['protocol'] = ('Adaptive inactive-policy follow-up for Acorn, Lebab and Prepack. '
@@ -240,6 +247,9 @@ def main():
         except BaseException as error:
             data['failures'].append({'label': label, 'error': repr(error)})
             save()
+            if pairs == 5 and isinstance(error, Exception):
+                print('FULL COMPARISON FAILURE', label, repr(error), flush=True)
+                return
             raise
 
     save()
@@ -286,32 +296,39 @@ def main():
             data['status'] = 'passed'
             print('FOLLOW-UP COMPLETE', arch, len(data['rows']), data['stop_reason'], flush=True)
             return
-        for name in (['web_tooling'] if pairs == 5 else ['web_tooling', 'octane']):
+        suites = (['web_tooling', 'octane', 'sunspider', 'fixed_work']
+                  if pairs == 5 else ['web_tooling', 'octane'])
+        for suite_index, name in enumerate(suites):
             _, directory, driver = next(x for x in stock if x[0] == name)
             for repeat in range(1 if pairs == 5 else 3):
-                reverse = (repeat + (pairs == 5 and arch == 'arm64')) % 2
+                reverse = (repeat + (suite_index + (arch == 'arm64') if pairs == 5 else 0)) % 2
                 for mode in (['refined', 'full'] if reverse else ['full', 'refined']):
                     measure(name, directory, driver, mode, repeat + 1)
-                summary = data['summary'][name]
-                if name == 'web_tooling' and repeat == 0 and summary['change_pct'] < -3:
+                if pairs != 5 and name == 'web_tooling' and repeat == 0:
+                    summary = data['summary'][name]
+                    if summary['change_pct'] >= -3:
+                        continue
                     losses = sum(v['change_pct'] < -10 for v in summary['cases'].values())
                     if losses >= 4:
                         data['status'] = 'rejected_early'
                         save()
                         print('Gross first-pair loss; stopped remaining measurements', flush=True)
                         return
-        for index, name in enumerate([] if pairs == 5 else p.a.NAMES):
+        for index, name in enumerate(p.a.NAMES):
             driver = report / (name + '.js')
             driver.write_text(p.a.driver_text(name))
-            for mode in (['full', 'refined'] if index % 2 == 0 else ['refined', 'full']):
+            reverse = (index + (pairs == 5 and arch == 'arm64')) % 2
+            for mode in (['refined', 'full'] if reverse else ['full', 'refined']):
                 measure(name, report, driver, mode, 1, True)
-        data['status'] = 'passed'
+        data['status'] = 'failed' if data['failures'] else 'passed'
     except BaseException:
         data['status'] = 'failed'
         raise
     finally:
         save()
     print('SIDE EFFECT COMPARISON COMPLETE', arch, len(data['rows']), flush=True)
+    if data['failures']:
+        raise RuntimeError('Full comparison completed with recorded execution failures')
 
 
 if __name__ == '__main__':
