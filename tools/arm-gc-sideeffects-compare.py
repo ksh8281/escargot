@@ -56,7 +56,7 @@ def summarize_inactive_prefix(rows, blocks=3):
     return result
 
 
-FOLLOWUP_CASES = ('acorn', 'lebab', 'prepack')
+FOLLOWUP_CASES = ('chai', 'terser')
 
 
 def summarize_followup(rows):
@@ -175,7 +175,7 @@ def main():
     wtb = report / 'wtb-score.js'
     text = wtb.read_text().replace('count:b.count}', 'count:b.count,sample_seconds:b.stats.sample}')
     assert 'sample_seconds' in text
-    if pairs in (1, 5):
+    if pairs == 5:
         assert text.count('minSamples: 3') == 1
         text = text.replace('minSamples: 3', 'minSamples: 20')
     wtb.write_text(text)
@@ -205,9 +205,11 @@ def main():
             'and does not automatically replace the historical baseline.')
 
     if pairs == 1:
-        data['protocol'] = ('Adaptive inactive-policy follow-up for Acorn, Lebab and Prepack. '
-            'Keep all eighteen WTB suite roots and execute the original first thirteen '
-            'workloads with all twenty upstream samples; abort after Prepack. '
+        data['protocol'] = ('Adaptive inactive-policy screen for Chai and Terser. '
+            'Keep all eighteen WTB suite roots and execute the original first sixteen '
+            'workloads, with twenty samples for Chai/Terser and three for the other '
+            'workloads; abort after Terser. Reduced preceding samples change allocation '
+            'history, so this diagnostic does not replace the original-sampling suite. '
             'First block: identical full-GC controls A, refined, B. Repeat in rotated '
             'order only if at least one target loses more than 2% to both controls '
             'in every completed block, up to three blocks. This is a predefined '
@@ -257,7 +259,10 @@ def main():
         if pairs == 1:
             _, directory, _ = next(x for x in stock if x[0] == 'web_tooling')
             driver = report / 'remaining-prefix.js'
-            driver.write_text(inactive_prefix_driver(wtb.read_text(), target="prepack", count=13))
+            text = inactive_prefix_driver(wtb.read_text(), target="terser", count=16)
+            needle = 'if(b.name==="terser")'
+            assert text.count(needle) == 1
+            driver.write_text(text.replace(needle, 'if(b.name==="chai"||b.name==="terser")'))
             controls = ['full_a', 'refined', 'full_b']
             for repeat in range(3):
                 for control in controls[repeat:] + controls[:repeat]:
@@ -268,11 +273,12 @@ def main():
                             driver, envs[mode], report, cpu, monitor, False)
                         parsed = json.loads(re.search(r'^WTB_SCORE_JSON (.*)$', contents, re.M)[1])
                         tests = parsed['tests']
-                        assert len(tests) == 13 and tests[-1]['name'] == 'prepack'
-                        assert all(t['hz'] > 0 and t['samples'] == len(t['sample_seconds']) == 20
+                        assert len(tests) == 16 and tests[-1]['name'] == 'terser'
+                        assert all(t['hz'] > 0 and t['samples'] == len(t['sample_seconds'])
+                                   == (20 if t['name'] in FOLLOWUP_CASES else 3)
                                    and all(s > 0 for s in t['sample_seconds']) for t in tests)
                         assert {t['name'] for t in tests} == r.WTB_NAMES - {
-                            'prettier', 'source-map', 'terser', 'typescript', 'uglify-js'}
+                            'typescript', 'uglify-js'}
                         audits = p.a.audits(contents)
                         assert audits['ALLOCATION_REFINED_AUDIT']['sites'] == 0
                         assert audits['ALLOCATION_PATTERN_AUDIT']['hints'] == 0
