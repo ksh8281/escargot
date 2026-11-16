@@ -771,6 +771,22 @@ void abort(void) {
                         last_progress = now
                     if 'COHORT_ABORT_STOP' in log.read_text(errors='replace'):
                         print('ABORT STOPPED; CAPTURING STACK', label, flush=True)
+                        maps = Path('/proc') / str(process.pid) / 'maps'
+                        mapping_text = maps.read_text()
+                        (report / (label + '.maps')).write_text(mapping_text)
+                        libraries = set()
+                        for line in mapping_text.splitlines():
+                            fields = line.split(None, 5)
+                            if len(fields) == 6 and fields[5].startswith('/'):
+                                mapped = Path(fields[5])
+                                if '.so' in mapped.name and mapped.is_file() and not str(mapped).startswith(str(report) + '/'):
+                                    libraries.add(mapped)
+                        for mapped in libraries:
+                            target = report / 'sysroot' / str(mapped).lstrip('/')
+                            target.parent.mkdir(parents=True, exist_ok=True)
+                            shutil.copy2(mapped, target)
+                        data['library_files'] = sorted(str(x) for x in libraries)
+                        data['source_directory'] = str(source)
                         with trace.open('w') as output_trace:
                             debug = subprocess.run([gdb, '-nx', '-nh', '-q', '-batch',
                                 str(engine), '-p', str(process.pid), '-x', str(commands)],
