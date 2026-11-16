@@ -655,17 +655,22 @@ def cohort_probe():
 
 
 def cohort_crash_probe():
-    # Capture a stopped abort without ptracing ordinary mprotect faults.
+    # Change only the fatal return instruction after exec, then detach.
+    # Normal write faults, libraries and allocator code remain untraced.
+    import ctypes
+    import errno
+    import pty
     import resource
+    import selectors
     import signal
+    import tty
     source = Path.cwd().resolve()
     root = Path(os.environ['BENCHMARK_OUTPUT_DIR']).resolve()
     arch = os.environ['BENCHMARK_ARCHITECTURE']
     report = root / ('cohort-crash-' + arch)
     report.mkdir()
     if arch != 'arm64':
-        c.write_json(report / 'measurements.json', {'status': 'skipped', 'arch': arch,
-            'reason': 'The observed abort occurred on ARM64.'})
+        c.write_json(report / 'measurements.json', {'status': 'skipped', 'arch': arch})
         return
     gdb = shutil.which('gdb')
     if not gdb:
@@ -673,158 +678,214 @@ def cohort_crash_probe():
         subprocess.run(['sudo', '-n', 'apt-get', 'install', '-y', 'gdb'], check=True)
         gdb = shutil.which('gdb')
     assert gdb
+    subprocess.run(['sudo', '-n', gdb, '-nx', '-nh', '-batch', '-ex', 'quit'], check=True)
     gc_source = source / 'third_party/GCutil'
     original = {n: (gc_source / n).read_bytes() for n in ['malloc.c', 'alloc.c']}
     patch = report / 'cohort.patch'
     patch.write_text(COHORT_PATCH)
     engine = report / 'measured-engine'
+    retained = Path('/home/sh8281.kim/actions-runner-2/_work2/_temp/'
+                    'escargot-arm-report.fo6br531/cohort-arm64/measured-engine')
+    failed_sha = 'c06479d7a7a5bd3c770d537abf83f109fabdb140a70b89e56af498e6bf33c425'
     try:
         c.run(['git', 'apply', '--check', str(patch)], cwd=gc_source)
         c.run(['git', 'apply', str(patch)], cwd=gc_source)
         source_hashes = {n: c.sha256(gc_source / n) for n in original}
-        binary = source.parent / 'build-arm64/escargot'
-        c.run(['cmake', '--build', str(binary.parent), '-j', '2'])
-        shutil.copy2(binary, engine)
+        if retained.is_file() and c.sha256(retained) == failed_sha:
+            shutil.copy2(retained, engine)
+            binary_origin = 'Exact retained failed executable, SHA-256 checked'
+        else:
+            binary = source.parent / 'build-arm64/escargot'
+            c.run(['cmake', '--build', str(binary.parent), '-j', '2'])
+            shutil.copy2(binary, engine)
+            binary_origin = 'Rebuilt identical GC sources; not the exact failed ELF'
     finally:
         for n, data in original.items():
             (gc_source / n).write_bytes(data)
     assert not c.output(['git', 'status', '--porcelain'], source)
-    shim_source = report / 'abort-stop.c'
-    shim_source.write_text(r'''
-#define _GNU_SOURCE
-#include <dlfcn.h>
-#include <signal.h>
-#include <stdlib.h>
-#include <sys/prctl.h>
-#include <unistd.h>
-static void (*next_abort)(void);
-__attribute__((constructor)) static void setup(void) {
-    next_abort = (void (*)(void))dlsym(RTLD_NEXT, "abort");
-    /* Only our launcher and its debugger descendants may attach. */
-    (void)prctl(PR_SET_PTRACER, (unsigned long)getppid(), 0, 0, 0);
-}
-void abort(void) {
-    static const char marker[] = "COHORT_ABORT_STOP\n";
-    ssize_t written = write(2, marker, sizeof(marker) - 1);
-    (void)written;
-    (void)raise(SIGSTOP);
-    if (next_abort) next_abort();
-    _exit(134);
-}
-''')
-    shim = report / 'abort-stop.so'
-    c.run(['cc', '-shared', '-fPIC', '-O2', '-o', str(shim), str(shim_source), '-ldl'])
+    disassembly = c.output(['objdump', '-d', '--disassemble=GC_default_on_abort', str(engine)])
+    (report / 'abort-disassembly.txt').write_text(disassembly + '\n')
+    returns = re.findall(r'^\s*([0-9a-f]+):\s+d65f03c0\s+ret\s*$', disassembly, re.M)
+    assert len(returns) == 1, returns
+    fatal_return = int(returns[0], 16)
     harness = Path(os.environ['BENCHMARK_HARNESS']).resolve()
     r.prepare_drivers(harness, report)
     driver = report / 'wtb-score.js'
-    text = driver.read_text()
+    text = driver.read_text().replace('count:b.count}', 'count:b.count,sample_seconds:b.stats.sample}')
     needle = '\nsuite.run();\n'
     assert text.count(needle) == 1
     text = text.replace(needle, '\nsuite.forEach(function(b){if(b.name==="chai"||b.name==="terser")'
         '{b.minSamples=20;b.options.minSamples=20;}});' + needle)
     driver.write_text(text)
-    # The core contains benchmark data only, not inherited CI credentials.
+    assert c.sha256(driver) == 'cd6656ded9d78137521a1c4002340c1a091c0f8ac550d12a7c38008880ef8caf'
     configured = p.environments()['refined']
-    env = {k: v for k, v in configured.items()
-           if k.startswith(('GC_', 'ESCARGOT_'))
-           or k in ('PATH', 'LANG', 'LC_ALL', 'TZ', 'LD_LIBRARY_PATH')}
-    env.update(HOME=str(report), LD_PRELOAD=str(shim))
+    # Keep the environment's ordered shape and string lengths, but remove
+    # inherited CI credentials before allowing a core to be captured.
+    safe = {'PATH', 'HOME', 'LANG', 'LANGUAGE', 'LC_ALL', 'LC_CTYPE', 'TZ',
+            'LD_LIBRARY_PATH', 'LD_PRELOAD', 'PWD', 'TMPDIR'}
+    env = {k: v if k.startswith(('GC_', 'ESCARGOT_')) or k in safe else 'x' * len(v)
+           for k, v in configured.items()}
+    env['LD_PRELOAD'] = ''
+    assert not any(k.startswith(('GC_', 'ESCARGOT_')) and 'TOKEN' in k for k in env)
     cpu = int(os.environ['BENCHMARK_CPU'])
+    monitor = next(x for x in sorted(os.sched_getaffinity(0)) if x != cpu)
+    os.sched_setaffinity(0, {monitor})
+    libc = ctypes.CDLL(None, use_errno=True)
+    libc.ptrace.restype = ctypes.c_long
+    libc.ptrace.argtypes = [ctypes.c_uint, ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p]
+    def ptrace(request, pid, address=0, value=0):
+        ctypes.set_errno(0)
+        result = libc.ptrace(request, pid, ctypes.c_void_p(address), ctypes.c_void_p(value))
+        if result == -1 and ctypes.get_errno():
+            raise OSError(ctypes.get_errno(), os.strerror(ctypes.get_errno()))
+        return result & ((1 << 64) - 1)
     data = {'status': 'running', 'arch': arch, 'diagnostic_not_acceptance': True,
         'revision': c.output(['git', 'rev-parse', 'HEAD'], source),
-        'binary_sha256': c.sha256(engine), 'gc_sources_sha256': source_hashes,
-        'protocol': 'Original WTB18 order and roots, Chai/Terser20 samples and others3. '
-            'At most four fresh processes, modes7/2/7/2; stop after capturing an abort. '
-            'The temporary preload stops only abort; ordinary write faults run untraced. '
-            'A debugger attaches after the stop. Engine environment is allowlisted before '
-            'any core capture. No map-limit, ASLR or collector safety override. '
-            'All runs are diagnostics, not performance measurements.',
+        'binary_sha256': c.sha256(engine), 'binary_origin': binary_origin,
+        'driver_sha256': c.sha256(driver), 'gc_sources_sha256': source_hashes,
+        'source_directory': str(source), 'fatal_return_offset': fatal_return,
+        'protocol': 'Original failed WTB driver byte-for-byte, PTY, no preload. '
+            'At exec stop replace only the fatal GC callback return with an ARM64 '
+            'self-branch, then detach before any engine code executes. No normal '
+            'SIGSEGV is traced. On a fatal log attach GDB and capture the original '
+            'signal context, collector state and core. CI values are replaced by '
+            'equal-length inert strings; public engine settings are preserved. '
+            'Twelve mode7 fresh processes, normal ASLR; last eight add inert layout '
+            'padding. No scores accepted. Stop on first captured error.',
         'rows': []}
     c.write_json(report / 'measurements.json', data)
     def child_setup():
         os.sched_setaffinity(0, {cpu})
         resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
-    for trial, mode in enumerate([7, 2, 7, 2], 1):
-        label = 'trial-' + str(trial) + '-mode' + str(mode)
+        ptrace(0, 0)  # PTRACE_TRACEME; exec will stop before engine startup.
+    paddings = [None] * 4 + [0, 64, 256, 1024, 4096, 8192, 16384, 32768]
+    for trial, padding in enumerate(paddings, 1):
+        label = 'trial-' + str(trial) + '-mode7'
+        trial_env = dict(env, GC_DIAG_COHORT='7')
+        if padding is not None:
+            trial_env['GC_REPLAY_LAYOUT'] = 'L' * padding
         log = report / (label + '.log')
         core = report / (label + '.core')
         trace = report / (label + '.gdb.txt')
-        commands = report / (label + '.gdb')
-        commands.write_text('set pagination off\nset confirm off\nset auto-load off\n'
-            'set print elements 24\nthread apply all bt full 40\ninfo registers\n'
-            'generate-core-file ' + str(core) + '\ndetach\nquit\n')
-        print('CRASH REPLAY START', label, flush=True)
         started = time.monotonic()
         last_progress = started
+        master, slave = pty.openpty()
+        tty.setraw(slave)
+        selector = selectors.DefaultSelector()
+        selector.register(master, selectors.EVENT_READ)
+        process = None
         captured = False
         debug_code = None
-        with log.open('wb') as output:
+        try:
             process = subprocess.Popen([str(engine), '--gc-generational', str(driver)],
-                cwd=harness / 'test/web-tooling-benchmark', env={**env, 'GC_DIAG_COHORT': str(mode)},
-                stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT,
+                cwd=harness / 'test/web-tooling-benchmark', env=trial_env,
+                stdin=subprocess.DEVNULL, stdout=slave, stderr=slave,
                 start_new_session=True, preexec_fn=child_setup)
-            try:
-                while process.poll() is None:
+            os.close(slave)
+            slave = None
+            waited, status = os.waitpid(process.pid, os.WUNTRACED)
+            assert waited == process.pid and os.WIFSTOPPED(status) and os.WSTOPSIG(status) == signal.SIGTRAP
+            maps_path = Path('/proc') / str(process.pid) / 'maps'
+            maps = maps_path.read_text()
+            mapped = [line.split(None, 5) for line in maps.splitlines() if str(engine) in line]
+            base = min(int(x[0].split('-')[0], 16) - int(x[2], 16) for x in mapped)
+            address = base + fatal_return
+            word = ptrace(1, process.pid, address)  # PEEK, preserve the adjacent instruction.
+            assert word & 0xffffffff == 0xd65f03c0, hex(word)
+            ptrace(4, process.pid, address, (word & 0xffffffff00000000) | 0x14000000)
+            assert ptrace(1, process.pid, address) & 0xffffffff == 0x14000000
+            ptrace(17, process.pid)  # DETACH: normal execution is not traced.
+            print('CRASH REPLAY START', label, 'padding', padding, 'base', hex(base), flush=True)
+            output = bytearray()
+            with log.open('wb') as stream:
+                while process.poll() is None or selector.get_map():
+                    for key, _ in selector.select(0.2):
+                        try:
+                            chunk = os.read(master, 65536)
+                        except OSError as error:
+                            if error.errno != errno.EIO:
+                                raise
+                            chunk = b''
+                        if not chunk:
+                            selector.unregister(master)
+                        else:
+                            stream.write(chunk)
+                            stream.flush()
+                            output.extend(chunk)
                     now = time.monotonic()
                     if now - last_progress >= 30:
-                        print('CRASH REPLAY PROGRESS', label, round(now-started), 's', flush=True)
                         last_progress = now
-                    if 'COHORT_ABORT_STOP' in log.read_text(errors='replace'):
-                        print('ABORT STOPPED; CAPTURING STACK', label, flush=True)
-                        maps = Path('/proc') / str(process.pid) / 'maps'
-                        mapping_text = maps.read_text()
+                        status_text = (Path('/proc') / str(process.pid) / 'status').read_text() if process.poll() is None else ''
+                        if status_text:
+                            assert re.search(r'^TracerPid:\s+0$', status_text, re.M), status_text
+                        print('CRASH REPLAY PROGRESS', label, round(now-started), 's', flush=True)
+                    if b'Unexpected segmentation fault' in output and process.poll() is None:
+                        print('FATAL ERROR; CAPTURING ORIGINAL SIGNAL STACK', label, flush=True)
+                        mapping_text = maps_path.read_text()
                         (report / (label + '.maps')).write_text(mapping_text)
                         libraries = set()
                         for line in mapping_text.splitlines():
                             fields = line.split(None, 5)
                             if len(fields) == 6 and fields[5].startswith('/'):
-                                mapped = Path(fields[5])
-                                if '.so' in mapped.name and mapped.is_file() and not str(mapped).startswith(str(report) + '/'):
-                                    libraries.add(mapped)
-                        for mapped in libraries:
-                            target = report / 'sysroot' / str(mapped).lstrip('/')
+                                library = Path(fields[5])
+                                if '.so' in library.name and library.is_file():
+                                    libraries.add(library)
+                        for library in libraries:
+                            target = report / 'sysroot' / str(library).lstrip('/')
                             target.parent.mkdir(parents=True, exist_ok=True)
-                            shutil.copy2(mapped, target)
-                        data['library_files'] = sorted(str(x) for x in libraries)
-                        data['source_directory'] = str(source)
-                        with trace.open('w') as output_trace:
-                            debug = subprocess.run([gdb, '-nx', '-nh', '-q', '-batch',
+                            shutil.copy2(library, target)
+                        data['library_files'] = sorted(map(str, libraries))
+                        commands = report / (label + '.gdb')
+                        commands.write_text('set pagination off\nset confirm off\nset auto-load off\n'
+                            'set print elements 32\nthread apply all bt full 60\ninfo registers\n'
+                            'generate-core-file ' + str(core) + '\n'
+                            'python\n'
+                            'for name in ["GC_gc_no", "GC_incremental", "GC_is_full_gc", "GC_mark_state", '
+                            '"GC_young_mark_active", "GC_young_old_valid", "GC_young_baseline_pending", '
+                            '"GC_admission_closed", "GC_admission_vdb_parked"]:\n'
+                            ' try: gdb.execute("p " + name)\n'
+                            ' except gdb.error as error: print(error)\n'
+                            'end\n'
+                            'set {unsigned int}' + hex(address) + ' = 0xd65f03c0\ndetach\nquit\n')
+                        with trace.open('w') as debug_output:
+                            debug = subprocess.run(['sudo', '-n', gdb, '-nx', '-nh', '-q', '-batch',
                                 str(engine), '-p', str(process.pid), '-x', str(commands)],
-                                stdout=output_trace, stderr=subprocess.STDOUT, timeout=55)
+                                stdout=debug_output, stderr=subprocess.STDOUT, timeout=55)
                         debug_code = debug.returncode
                         captured = core.is_file() and core.stat().st_size > 0
-                        os.kill(process.pid, signal.SIGCONT)
                         process.wait(timeout=30)
                         break
                     if now - started > 900:
-                        raise TimeoutError('Crash replay exceeded its bounded duration')
-                    time.sleep(1)
-            finally:
-                if process.poll() is None:
-                    os.killpg(process.pid, signal.SIGKILL)
-                    process.wait()
-        output = log.read_text(errors='replace')
-        row = {'trial': trial, 'mode': mode, 'engine_returncode': process.returncode,
-               'seconds': time.monotonic()-started, 'captured': captured,
-               'debugger_returncode': debug_code, 'log': log.name}
+                        raise TimeoutError('Crash replay exceeded 900 seconds')
+        finally:
+            if process is not None and process.poll() is None:
+                os.killpg(process.pid, signal.SIGKILL)
+                process.wait()
+            if slave is not None:
+                os.close(slave)
+            selector.close()
+            os.close(master)
+        row = {'trial': trial, 'mode': 7, 'padding': padding, 'load_base': hex(base),
+            'engine_returncode': process.returncode, 'seconds': time.monotonic()-started,
+            'captured': captured, 'debugger_returncode': debug_code, 'log': log.name,
+            'environment_shape': [[k, len(v)] for k, v in trial_env.items()]}
         if core.is_file():
+            subprocess.run(['sudo', '-n', 'chown', str(os.getuid()) + ':' + str(os.getgid()), str(core)], check=True)
             row['core_bytes'] = core.stat().st_size
             c.run(['gzip', '-1', str(core)])
             row['compressed_core'] = core.name + '.gz'
         if process.returncode == 0:
-            try:
-                cohort_audit(output, 'refined')
-                row['audit'] = 'passed'
-            except Exception as error:
-                row['audit'] = repr(error)
+            cohort_audit(log.read_text(errors='replace'), 'refined')
+            row['audit'] = 'passed'
         data['rows'].append(row)
         data['status'] = 'captured' if captured else 'running'
         c.write_json(report / 'measurements.json', data)
-        print('CRASH REPLAY RESULT', row, flush=True)
-        if captured:
+        print('CRASH REPLAY RESULT', label, row['engine_returncode'], 'captured', captured, flush=True)
+        if captured or process.returncode != 0:
+            data['status'] = 'captured' if captured else 'failure_without_capture'
+            c.write_json(report / 'measurements.json', data)
             return
-    data['status'] = ('failure_without_capture' if any(x['engine_returncode'] != 0
-                      for x in data['rows']) else 'not_reproduced')
+    data['status'] = 'not_reproduced'
     c.write_json(report / 'measurements.json', data)
 
 
