@@ -654,12 +654,170 @@ def cohort_probe():
     print('COHORT COMPLETE', arch, len(data['rows']), flush=True)
 
 
+def cohort_crash_probe():
+    # Capture a stopped abort without ptracing ordinary mprotect faults.
+    import resource
+    import signal
+    source = Path.cwd().resolve()
+    root = Path(os.environ['BENCHMARK_OUTPUT_DIR']).resolve()
+    arch = os.environ['BENCHMARK_ARCHITECTURE']
+    report = root / ('cohort-crash-' + arch)
+    report.mkdir()
+    if arch != 'arm64':
+        c.write_json(report / 'measurements.json', {'status': 'skipped', 'arch': arch,
+            'reason': 'The observed abort occurred on ARM64.'})
+        return
+    gdb = shutil.which('gdb')
+    if not gdb:
+        subprocess.run(['sudo', '-n', 'apt-get', 'update'], check=True)
+        subprocess.run(['sudo', '-n', 'apt-get', 'install', '-y', 'gdb'], check=True)
+        gdb = shutil.which('gdb')
+    assert gdb
+    gc_source = source / 'third_party/GCutil'
+    original = {n: (gc_source / n).read_bytes() for n in ['malloc.c', 'alloc.c']}
+    patch = report / 'cohort.patch'
+    patch.write_text(COHORT_PATCH)
+    engine = report / 'measured-engine'
+    try:
+        c.run(['git', 'apply', '--check', str(patch)], cwd=gc_source)
+        c.run(['git', 'apply', str(patch)], cwd=gc_source)
+        source_hashes = {n: c.sha256(gc_source / n) for n in original}
+        binary = source.parent / 'build-arm64/escargot'
+        c.run(['cmake', '--build', str(binary.parent), '-j', '2'])
+        shutil.copy2(binary, engine)
+    finally:
+        for n, data in original.items():
+            (gc_source / n).write_bytes(data)
+    assert not c.output(['git', 'status', '--porcelain'], source)
+    shim_source = report / 'abort-stop.c'
+    shim_source.write_text(r'''
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <signal.h>
+#include <stdlib.h>
+#include <sys/prctl.h>
+#include <unistd.h>
+static void (*next_abort)(void);
+__attribute__((constructor)) static void setup(void) {
+    next_abort = (void (*)(void))dlsym(RTLD_NEXT, "abort");
+    /* Only our launcher and its debugger descendants may attach. */
+    (void)prctl(PR_SET_PTRACER, (unsigned long)getppid(), 0, 0, 0);
+}
+void abort(void) {
+    static const char marker[] = "COHORT_ABORT_STOP\n";
+    ssize_t written = write(2, marker, sizeof(marker) - 1);
+    (void)written;
+    (void)raise(SIGSTOP);
+    if (next_abort) next_abort();
+    _exit(134);
+}
+''')
+    shim = report / 'abort-stop.so'
+    c.run(['cc', '-shared', '-fPIC', '-O2', '-o', str(shim), str(shim_source), '-ldl'])
+    harness = Path(os.environ['BENCHMARK_HARNESS']).resolve()
+    r.prepare_drivers(harness, report)
+    driver = report / 'wtb-score.js'
+    text = driver.read_text()
+    needle = '\nsuite.run();\n'
+    assert text.count(needle) == 1
+    text = text.replace(needle, '\nsuite.forEach(function(b){if(b.name==="chai"||b.name==="terser")'
+        '{b.minSamples=20;b.options.minSamples=20;}});' + needle)
+    driver.write_text(text)
+    # The core contains benchmark data only, not inherited CI credentials.
+    configured = p.environments()['refined']
+    env = {k: v for k, v in configured.items()
+           if k.startswith(('GC_', 'ESCARGOT_'))
+           or k in ('PATH', 'LANG', 'LC_ALL', 'TZ', 'LD_LIBRARY_PATH')}
+    env.update(HOME=str(report), LD_PRELOAD=str(shim))
+    cpu = int(os.environ['BENCHMARK_CPU'])
+    data = {'status': 'running', 'arch': arch, 'diagnostic_not_acceptance': True,
+        'revision': c.output(['git', 'rev-parse', 'HEAD'], source),
+        'binary_sha256': c.sha256(engine), 'gc_sources_sha256': source_hashes,
+        'protocol': 'Original WTB18 order and roots, Chai/Terser20 samples and others3. '
+            'At most four fresh processes, modes7/2/7/2; stop after capturing an abort. '
+            'The temporary preload stops only abort; ordinary write faults run untraced. '
+            'A debugger attaches after the stop. Engine environment is allowlisted before '
+            'any core capture. No map-limit, ASLR or collector safety override. '
+            'All runs are diagnostics, not performance measurements.',
+        'rows': []}
+    c.write_json(report / 'measurements.json', data)
+    def child_setup():
+        os.sched_setaffinity(0, {cpu})
+        resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+    for trial, mode in enumerate([7, 2, 7, 2], 1):
+        label = 'trial-' + str(trial) + '-mode' + str(mode)
+        log = report / (label + '.log')
+        core = report / (label + '.core')
+        trace = report / (label + '.gdb.txt')
+        commands = report / (label + '.gdb')
+        commands.write_text('set pagination off\nset confirm off\nset auto-load off\n'
+            'set print elements 24\nthread apply all bt full 40\ninfo registers\n'
+            'generate-core-file ' + str(core) + '\ndetach\nquit\n')
+        print('CRASH REPLAY START', label, flush=True)
+        started = time.monotonic()
+        last_progress = started
+        captured = False
+        debug_code = None
+        with log.open('wb') as output:
+            process = subprocess.Popen([str(engine), '--gc-generational', str(driver)],
+                cwd=harness / 'test/web-tooling-benchmark', env={**env, 'GC_DIAG_COHORT': str(mode)},
+                stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT,
+                start_new_session=True, preexec_fn=child_setup)
+            try:
+                while process.poll() is None:
+                    now = time.monotonic()
+                    if now - last_progress >= 30:
+                        print('CRASH REPLAY PROGRESS', label, round(now-started), 's', flush=True)
+                        last_progress = now
+                    if 'COHORT_ABORT_STOP' in log.read_text(errors='replace'):
+                        print('ABORT STOPPED; CAPTURING STACK', label, flush=True)
+                        with trace.open('w') as output_trace:
+                            debug = subprocess.run([gdb, '-nx', '-nh', '-q', '-batch',
+                                str(engine), '-p', str(process.pid), '-x', str(commands)],
+                                stdout=output_trace, stderr=subprocess.STDOUT, timeout=55)
+                        debug_code = debug.returncode
+                        captured = core.is_file() and core.stat().st_size > 0
+                        os.kill(process.pid, signal.SIGCONT)
+                        process.wait(timeout=30)
+                        break
+                    if now - started > 900:
+                        raise TimeoutError('Crash replay exceeded its bounded duration')
+                    time.sleep(1)
+            finally:
+                if process.poll() is None:
+                    os.killpg(process.pid, signal.SIGKILL)
+                    process.wait()
+        output = log.read_text(errors='replace')
+        row = {'trial': trial, 'mode': mode, 'engine_returncode': process.returncode,
+               'seconds': time.monotonic()-started, 'captured': captured,
+               'debugger_returncode': debug_code, 'log': log.name}
+        if core.is_file():
+            row['core_bytes'] = core.stat().st_size
+            c.run(['gzip', '-1', str(core)])
+            row['compressed_core'] = core.name + '.gz'
+        if process.returncode == 0:
+            try:
+                cohort_audit(output, 'refined')
+                row['audit'] = 'passed'
+            except Exception as error:
+                row['audit'] = repr(error)
+        data['rows'].append(row)
+        data['status'] = 'captured' if captured else 'running'
+        c.write_json(report / 'measurements.json', data)
+        print('CRASH REPLAY RESULT', row, flush=True)
+        if captured:
+            return
+    data['status'] = ('failure_without_capture' if any(x['engine_returncode'] != 0
+                      for x in data['rows']) else 'not_reproduced')
+    c.write_json(report / 'measurements.json', data)
+
+
 def main():
     if int(os.environ["BENCHMARK_REPETITIONS"]) == 5:
         cohort_probe()
         return
     if int(os.environ['BENCHMARK_REPETITIONS']) == 1:
-        profile_terser()
+        cohort_crash_probe()
         return
     source = Path.cwd().resolve()
     root = Path(os.environ['BENCHMARK_OUTPUT_DIR']).resolve()
