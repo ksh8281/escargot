@@ -698,29 +698,22 @@ void initializeCustomAllocators()
 void iterateSpecificKindOfObject(ExecutionState& state, HeapObjectKind kind, HeapObjectIteratorCallback callback)
 {
     struct HeapObjectIteratorData {
-        int kind;
         ExecutionState& state;
         HeapObjectIteratorCallback callback;
     };
 
-    HeapObjectIteratorData data{ s_gcKinds[kind], state, callback };
+    HeapObjectIteratorData data{ state, callback };
 
     ASSERT(!GC_is_disabled());
-    GC_enumerate_reachable_objects_inner([](void* obj, size_t bytes, void* cd) {
-        size_t size;
-        int kind = GC_get_kind_and_size(obj, &size);
-        ASSERT(size == bytes);
-
+    GC_enumerate_reachable_objects_of_kind_inner([](void* obj, size_t, void* cd) {
         HeapObjectIteratorData* data = (HeapObjectIteratorData*)cd;
-        if (kind == data->kind) {
 #ifdef GC_DEBUG
-            data->callback(data->state, GC_USR_PTR_FROM_BASE(obj));
+        data->callback(data->state, GC_USR_PTR_FROM_BASE(obj));
 #else
-            data->callback(data->state, obj);
+        data->callback(data->state, obj);
 #endif
-        }
     },
-                                         (void*)(&data));
+                                                 (void*)(&data), s_gcKinds[kind]);
 }
 
 template <>
