@@ -20,6 +20,8 @@ def snapshot(pid):
             regions[-1][-1] = int(line.split()[1])
     # The unused tail of the compressed-pointer reservation ends on the next
     # 4-GiB boundary. All CodeLoad heaps are far smaller than half the cage.
+    if any(left[1] > right[0] for left, right in zip(regions, regions[1:])):
+        return None
     cages = {end - CAGE_SIZE for start, end, perm, _, _ in regions
              if perm.startswith("---") and end % CAGE_SIZE == 0
              and CAGE_SIZE // 2 < end - start <= CAGE_SIZE}
