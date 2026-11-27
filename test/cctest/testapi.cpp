@@ -685,6 +685,16 @@ TEST(ValueRef, Basic1)
     });
 }
 
+TEST(ValueRef, CanonicalizesExternalNaNs)
+{
+    const double canonical = std::numeric_limits<double>::quiet_NaN();
+    for (auto* value : { ValueRef::create(-std::numeric_limits<float>::quiet_NaN()), ValueRef::create(-canonical) }) {
+        ASSERT_TRUE(value->isNumber());
+        double number = value->asNumber();
+        EXPECT_EQ(0, memcmp(&canonical, &number, sizeof(number)));
+    }
+}
+
 TEST(ValueRef, Basic2)
 {
     Evaluator::execute(g_context.get(), [](ExecutionStateRef* state) -> ValueRef* {
