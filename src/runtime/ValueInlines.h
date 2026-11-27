@@ -189,6 +189,9 @@ inline Value::Value(const BigInt* ptr)
 inline Value::Value(EncodeAsDoubleTag, const double& d)
 {
     u.asDouble = d;
+    if (UNLIKELY(!isDouble())) {
+        u.asDouble = std::numeric_limits<double>::quiet_NaN();
+    }
 }
 
 inline Value::Value(int i)
@@ -465,10 +468,6 @@ inline Value::Value(const BigInt* ptr)
 {
 }
 
-inline int64_t reinterpretDoubleToInt64(double value)
-{
-    return bitwise_cast<int64_t>(value);
-}
 inline double reinterpretInt64ToDouble(int64_t value)
 {
     return bitwise_cast<double>(value);
@@ -476,12 +475,11 @@ inline double reinterpretInt64ToDouble(int64_t value)
 
 inline Value::Value(EncodeAsDoubleTag, const double& d)
 {
-    // Perform the offset addition in unsigned arithmetic: the bit pattern of a
-    // double reinterpreted as int64_t can be negative (e.g. NaN payloads with the
-    // sign bit set), and adding DoubleEncodeOffset to it can overflow int64_t,
-    // which is UB for signed integers. Unsigned overflow wraps around by
-    // definition and yields the same bit pattern we want here.
-    u.asInt64 = static_cast<int64_t>(static_cast<uint64_t>(reinterpretDoubleToInt64(d)) + static_cast<uint64_t>(DoubleEncodeOffset));
+    uint64_t bits = bitwise_cast<uint64_t>(d);
+    if (UNLIKELY(bits >= static_cast<uint64_t>(DoubleInvalidBeginning))) {
+        bits = bitwise_cast<uint64_t>(std::numeric_limits<double>::quiet_NaN());
+    }
+    u.asInt64 = static_cast<int64_t>(bits + static_cast<uint64_t>(DoubleEncodeOffset));
 }
 
 inline Value::Value(int i)
@@ -540,8 +538,7 @@ inline bool Value::asBoolean() const
 inline double Value::asDouble() const
 {
     ASSERT(isDouble());
-    // See the comment in the EncodeAsDoubleTag constructor: do the inverse
-    // subtraction in unsigned arithmetic to avoid signed-overflow UB.
+    // Undo the encoding offset using unsigned arithmetic to allow wraparound.
     return reinterpretInt64ToDouble(static_cast<int64_t>(static_cast<uint64_t>(u.asInt64) - static_cast<uint64_t>(DoubleEncodeOffset)));
 }
 
@@ -756,15 +753,7 @@ ALWAYS_INLINE Value::Value(DoubleToIntConvertibleTestNeedsTag, double d)
         *this = Value(asInt32);
         return;
     }
-#ifdef ESCARGOT_64
-    uint64_t bits = bitwise_cast<uint64_t>(d);
-    if (UNLIKELY(bits >= static_cast<uint64_t>(DoubleInvalidBeginning))) {
-        bits = bitwise_cast<uint64_t>(std::numeric_limits<double>::quiet_NaN());
-    }
-    u.asInt64 = static_cast<int64_t>(bits + static_cast<uint64_t>(DoubleEncodeOffset));
-#else
     *this = Value(EncodeAsDouble, d);
-#endif
 }
 
 ALWAYS_INLINE Value::Value(PreferDoubleTag, double d)
@@ -784,7 +773,6 @@ ALWAYS_INLINE Value::Value(PreferDoubleTag, double d)
     if (isInt32ConvertibleDouble(d, asInt32)) {
         *this = Value(asInt32);
     } else {
-        // NaNs were canonicalized above, so no tag-collision check is needed.
         *this = Value(EncodeAsDouble, d);
     }
 }
